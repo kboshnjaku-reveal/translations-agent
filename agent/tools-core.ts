@@ -225,7 +225,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
           return { absPath: file.absPath, sourceValue: undefined };
         },
         updates as Update[],
-        { sourceByKey },
+        { sourceByKey, sourceLocale: bundle.sourceLocale, localeWrapper: bundle.localeWrapper },
       );
 
       for (const w of result.written) state.updatedFiles.add(`${bundleId}/${w}`);

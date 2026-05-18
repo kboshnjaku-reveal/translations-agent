@@ -18,6 +18,8 @@ export type Bundle = {
   sourceLocale: string;
   sourceFile: LocaleFile;
   targets: LocaleFile[];
+  /** true when locale JSON files wrap their content in a root key matching the locale name, e.g. {"en": {...}} */
+  localeWrapper: boolean;
 };
 
 const LOCALE_GLOBS = [
@@ -89,12 +91,19 @@ export async function scanRepository(root: string, overrideSourceLocale?: string
     const targets = localeFiles.filter((f) => f.locale !== sourceLocale);
     if (targets.length === 0) continue;
 
+    // Detect locale-wrapper pattern: source JSON has a single root key equal to the locale name
+    const sourceTopKeys = Object.keys(sourceFile.json);
+    const localeWrapper =
+      sourceTopKeys.length === 1 &&
+      sourceTopKeys[0]!.toLowerCase() === sourceLocale.toLowerCase();
+
     bundles.push({
       id: path.relative(root, dir) || ".",
       dir,
       sourceLocale,
       sourceFile,
       targets,
+      localeWrapper,
     });
   }
 
