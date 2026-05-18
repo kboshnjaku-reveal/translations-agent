@@ -1,0 +1,32 @@
+{
+  "name": "translations-agent",
+  "version": "0.1.0",
+  "description": "Repository-aware localization automation agent built on @openai/agents.",
+  "type": "module",
+  "bin": {
+    "translations-agent": "./dist/agent/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx agent/index.ts",
+    "dev": "tsx agent/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.0.11",
+    "dotenv": "^16.4.5",
+    "fast-glob": "^3.3.2",
+    "jsonc-parser": "^3.3.1",
+    "openai": "^4.104.0",
+    "simple-git": "^3.25.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

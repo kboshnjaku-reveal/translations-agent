@@ -1,0 +1,100 @@
+{
+  "de": {
+    "formality": "Use formal Sie-form (Sie, Ihnen, Ihr/Ihre). Never du, dich, dir, dein.",
+    "spelling": "Use ß per current orthography (groß, Straße, Maßnahme). Use long-vowel ß rule; use ss only after short vowels (dass, muss).",
+    "antiPatterns": [
+      "Avoid English loanwords when a natural German equivalent exists (e.g., 'Datei' over 'File', 'Anwendung' over 'Application' for UI labels).",
+      "Avoid literal calques from English (e.g., 'macht Sinn' → prefer 'ist sinnvoll')."
+    ],
+    "jurisdiction": "Standard German (Germany). Default to DACH-neutral but lean German conventions for compound nouns.",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
+  "nl": {
+    "formality": "Use formal u-form (u, uw). Never je, jij, jou, jouw, jullie.",
+    "spelling": "Use 'ij' digraph (tijd, zijn, bijlage). Never 'y' substitution.",
+    "antiPatterns": [
+      "Avoid Anglicisms when a Dutch equivalent is established (e.g., 'bijlage' over 'attachment' in formal contexts).",
+      "Avoid Belgian-Dutch variants in spelling (e.g., prefer 'gsm' only when source clearly intends mobile)."
+    ],
+    "jurisdiction": "Netherlands Dutch (Nederlands), not Flemish (Vlaams).",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
+  "es": {
+    "formality": "Use European Spanish formal register. Prefer 'usted' for direct address in legal/professional contexts.",
+    "spelling": "Use inverted opening punctuation: ¿ before questions, ¡ before exclamations. Use European Spanish vocabulary.",
+    "antiPatterns": [
+      "Avoid Latin American vocabulary: prefer 'ordenador' over 'computadora', 'móvil' over 'celular', 'coche' over 'carro', 'piso' over 'departamento', 'zumo' over 'jugo'.",
+      "Avoid voseo (vos/vení/tomá) — strictly Peninsular forms."
+    ],
+    "jurisdiction": "Spain (Peninsular Spanish). Spanish legal terms use Spain's civil code conventions.",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
+  "fr": {
+    "formality": "Use formal vous-form. Never tu/te/toi/ton/ta/tes in product UI.",
+    "spelling": "Use French typographic conventions: non-breaking space before ; : ! ? » and after «.",
+    "antiPatterns": [
+      "Avoid English loanwords when an Académie-accepted French term exists (e.g., 'téléchargement' over 'download').",
+      "Avoid québécois-specific vocabulary (e.g., 'courriel' is acceptable but 'magasiner' is not in EU French)."
+    ],
+    "jurisdiction": "France (français de France).",
+    "structureRules": [
+      "Preserve placeholders exactly.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes."
+    ]
+  },
+  "pt": {
+    "formality": "Use formal address. Default European Portuguese unless source specifies Brazilian.",
+    "spelling": "Use European Portuguese orthography (acordo ortográfico 1990 where applicable to PT-PT).",
+    "antiPatterns": [
+      "Avoid Brazilian Portuguese vocabulary in EU PT context (e.g., 'ficheiro' over 'arquivo', 'rato' over 'mouse')."
+    ],
+    "jurisdiction": "Portugal (Português de Portugal).",
+    "structureRules": [
+      "Preserve placeholders exactly.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes."
+    ]
+  },
+  "placement": {
+    "button_or_menu_item": {
+      "constraint": "≤3 words, action-led verb-first, no terminal punctuation, sentence case.",
+      "examples": ["Save", "Add user", "Export CSV"]
+    },
+    "label_placeholder_title": {
+      "constraint": "≤6 words, noun phrase, no terminal punctuation.",
+      "examples": ["Account holder name", "Search documents"]
+    },
+    "error_message": {
+      "constraint": "Exactly one complete sentence with terminal punctuation. State what failed and (when possible) how to recover.",
+      "examples": ["The upload failed. Please try again."]
+    },
+    "tooltip": {
+      "constraint": "One to two short sentences. Plain language. No marketing copy.",
+      "examples": ["Click to copy. The value is added to your clipboard."]
+    },
+    "notification": {
+      "constraint": "One concise sentence, present tense, user-centric.",
+      "examples": ["Your export is ready to download."]
+    },
+    "legal_disclaimer": {
+      "constraint": "Formal legal register. Preserve exact legal terminology. Translate conservatively.",
+      "examples": ["By proceeding, you accept the terms of service."]
+    }
+  }
+}
