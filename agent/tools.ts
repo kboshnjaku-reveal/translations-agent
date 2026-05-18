@@ -57,7 +57,7 @@ const classifyParams = z.object({ taskId: z.string(), text: z.string(), traceTok
 const localeRulesParams = z.object({
   taskId: z.string(),
   locale: z.string(),
-  placement: z.string().optional(),
+  placement: z.string().nullable().optional(),
   traceToken: z.string(),
 });
 
@@ -72,7 +72,7 @@ const validateParams = z.object({
 
 const scoreParams = z.object({
   taskId: z.string(),
-  webScore: z.number().optional(),
+  webScore: z.number().nullable().optional(),
   localeScore: z.number(),
   structureScore: z.number(),
 });
@@ -87,7 +87,7 @@ const commitBundleParams = z.object({
       keyPath: z.string(),
       value: z.string(),
       needsReview: z.boolean(),
-      failureReason: z.string().optional(),
+      failureReason: z.string().nullable().optional(),
     }),
   ),
 });
@@ -271,7 +271,7 @@ export function buildMcpServer(deps: ServerDeps) {
       const { taskId, webScore, localeScore, structureScore } = input;
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
-      const result = scoreConfidence({ webScore, localeScore, structureScore });
+      const result = scoreConfidence({ webScore: webScore ?? undefined, localeScore, structureScore });
       trace.issue(taskId, "score");
       return ok(result);
     },
@@ -325,7 +325,7 @@ export function buildMcpServer(deps: ServerDeps) {
             bundle: bundleId,
             locale: u.targetLocale,
             keyPath: u.keyPath,
-            reason: u.failureReason,
+            reason: u.failureReason ?? undefined,
           });
         } else {
           const rejected = result.rejected.find(
