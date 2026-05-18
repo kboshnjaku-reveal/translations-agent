@@ -92,7 +92,7 @@ const commitBundleParams = z.object({
   ),
 });
 
-const emitReportParams = z.object({ stats: z.record(z.unknown()) });
+const emitReportParams = z.object({ stats: z.string().describe("JSON-serialized tally of the agent's translation run (call JSON.stringify on your stats object before passing).") });
 
 // ── Tool factory ───────────────────────────────────────────────────────────────
 
@@ -348,7 +348,8 @@ export function buildMcpServer(deps: ServerDeps) {
       "Emit the final localization report. Call this exactly once after the work queue is drained.",
     parameters: emitReportParams,
     execute: async (input: z.infer<typeof emitReportParams>) => {
-      const { stats: agentStats } = input;
+      let agentStats: unknown;
+      try { agentStats = JSON.parse(input.stats); } catch { agentStats = input.stats; }
       if (stats.reportEmitted) return err("Report already emitted for this run.");
       stats.reportEmitted = true;
 

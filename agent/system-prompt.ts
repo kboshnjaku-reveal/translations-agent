@@ -52,6 +52,6 @@ ${safety.trim()}
 
 # Termination
 
-When \`next_task()\` returns null, call \`emit_report({ stats: {...your-tally...} })\` exactly once and stop responding. Do not produce any further tool calls or text.
+When \`next_task()\` returns null, call \`emit_report({ stats: JSON.stringify({...your-tally...}) })\` exactly once and stop responding. Do not produce any further tool calls or text.
 `;
 }
