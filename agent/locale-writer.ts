@@ -19,6 +19,19 @@ export type CommitResult = {
 
 export type ResolveTargetPath = (targetLocale: string) => { absPath: string; sourceValue: string | undefined } | undefined;
 
+function remapLocalePrefix(keyPath: string, sourceLocale: string | undefined, targetLocale: string, targetJson: JsonObject): string {
+  if (!sourceLocale) return keyPath;
+  const srcPrefix = sourceLocale + ".";
+  if (!keyPath.startsWith(srcPrefix)) return keyPath;
+  const rest = keyPath.slice(srcPrefix.length);
+  // Target file already uses locale-prefixed root keys, or is empty → mirror that structure
+  if (targetLocale in targetJson || Object.keys(targetJson).length === 0) {
+    return targetLocale + "." + rest;
+  }
+  // Target file uses flat (non-locale-prefixed) keys → strip source prefix only
+  return rest;
+}
+
 /**
  * Atomically merge updates into target locale files for a single bundle.
  *
@@ -29,7 +42,7 @@ export type ResolveTargetPath = (targetLocale: string) => { absPath: string; sou
 export async function commitBundleUpdates(
   resolve: ResolveTargetPath,
   updates: Update[],
-  options: { sourceByKey: Map<string, string> },
+  options: { sourceByKey: Map<string, string>; sourceLocale?: string },
 ): Promise<CommitResult> {
   const written: string[] = [];
   const rejected: CommitResult["rejected"] = [];
@@ -82,9 +95,10 @@ export async function commitBundleUpdates(
       parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
 
     for (const u of localeUpdates) {
-      setDeep(target, u.keyPath, u.value);
+      const writeKey = remapLocalePrefix(u.keyPath, options.sourceLocale, locale, target);
+      setDeep(target, writeKey, u.value);
       if (u.needsReview) {
-        setDeep(target, `${u.keyPath}__needsReview`, "true");
+        setDeep(target, `${writeKey}__needsReview`, "true");
       }
     }
 

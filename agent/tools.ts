@@ -314,7 +314,7 @@ export function buildMcpServer(deps: ServerDeps) {
           return { absPath: file.absPath, sourceValue: undefined };
         },
         updates as Update[],
-        { sourceByKey },
+        { sourceByKey, sourceLocale: bundle.sourceLocale },
       );
 
       for (const w of result.written) stats.updatedFiles.add(`${bundleId}/${w}`);
