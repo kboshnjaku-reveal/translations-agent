@@ -6,39 +6,39 @@ import fs from "node:fs/promises";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { Agent, run, tool } from "@openai/agents";
 import fg from "fast-glob";
 import { scanRepository } from "./repository.js";
 import { ensureCleanGitState, detectChangedKeys, isGitRepo } from "./git.js";
 import { buildWorkQueue } from "./work-queue.js";
-import { buildMcpServer, type ReportStats } from "./tools.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildGlossary, type LocaleEntries } from "../lib/glossary.js";
+import { buildOpenAITools } from "./tools-openai.js";
+import { buildAnthropicServer } from "./tools-anthropic.js";
+import type { ReportStats } from "./tools-core.js";
 
 const execAsync = promisify(exec);
+
+// ── CLI ────────────────────────────────────────────────────────────────────────
+
+type Provider = "openai" | "anthropic";
 
 type Cli = {
   webValidate: boolean;
   sourceLocale?: string;
   root: string;
-  model: string;
+  model?: string;
   help: boolean;
 };
 
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = {
-    webValidate: false,
-    root: process.cwd(),
-    model: "gpt-4o",
-    help: false,
-  };
+  const cli: Cli = { webValidate: false, root: process.cwd(), help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") cli.help = true;
     else if (a === "--web-validate") cli.webValidate = true;
     else if (a === "--source-locale") cli.sourceLocale = argv[++i];
     else if (a === "--root") cli.root = path.resolve(argv[++i] ?? process.cwd());
-    else if (a === "--model") cli.model = argv[++i] ?? "gpt-4o";
+    else if (a === "--model") cli.model = argv[++i];
   }
   return cli;
 }
@@ -53,12 +53,57 @@ Options:
   --web-validate              Enable web search validation for ambiguous/legal content
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
-  --model <name>              OpenAI model to use (default: gpt-4o)
+  --model <name>              Override the model (default: gpt-4.5 for OpenAI, claude-opus-4-7 for Anthropic)
   --help, -h                  Show this help message
+
+Provider selection (set one key in your .env or environment):
+  OPENAI_API_KEY              Uses OpenAI agents SDK (gpt-4.5)
+  ANTHROPIC_API_KEY           Uses Anthropic Claude agent SDK (claude-opus-4-7)
+
+If both keys are set, the agent will ask which provider to use at startup.
 
 The agent must be run inside a git repository. It detects changed source-locale keys
 and translates them into target locale files in the same directory.`);
 }
+
+// ── Provider detection ─────────────────────────────────────────────────────────
+
+async function detectProvider(): Promise<Provider> {
+  const hasOpenAI = !!(process.env.OPENAI_API_KEY?.trim());
+  const hasAnthropic = !!(process.env.ANTHROPIC_API_KEY?.trim());
+
+  if (hasOpenAI && hasAnthropic) return askProviderChoice();
+  if (hasOpenAI) return "openai";
+  if (hasAnthropic) return "anthropic";
+
+  console.error(`
+ERROR: No API key found.
+
+Set one of the following in your .env file or environment:
+
+  OPENAI_API_KEY=<key>       → uses OpenAI agents SDK  (default model: gpt-4.5)
+  ANTHROPIC_API_KEY=<key>    → uses Anthropic Claude SDK (default model: claude-opus-4-7)
+`);
+  process.exit(1);
+}
+
+async function askProviderChoice(): Promise<Provider> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log("\nBoth OPENAI_API_KEY and ANTHROPIC_API_KEY are set.");
+  console.log("  1) OpenAI    (default model: gpt-4.5)");
+  console.log("  2) Anthropic (default model: claude-opus-4-7)");
+  const answer = await new Promise<string>((resolve) =>
+    rl.question("\nWhich provider should be used? Enter 1 or 2: ", resolve),
+  );
+  rl.close();
+  const choice = answer.trim();
+  if (choice === "1") return "openai";
+  if (choice === "2") return "anthropic";
+  console.error("Invalid choice. Please enter 1 or 2.");
+  process.exit(1);
+}
+
+// ── Permission prompt ──────────────────────────────────────────────────────────
 
 async function askPermission(): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -73,15 +118,22 @@ async function askPermission(): Promise<boolean> {
   return answer.trim().toLowerCase() === "y" || answer.trim().toLowerCase() === "yes";
 }
 
-// ── Built-in filesystem tools (analogues of Anthropic's Read / Glob / Bash) ──
+// ── OpenAI execution path ──────────────────────────────────────────────────────
 
-function makeFileSystemTools(root: string) {
+async function runOpenAI(opts: {
+  model: string;
+  systemPrompt: string;
+  root: string;
+  webValidate: boolean;
+  taskCount: number;
+  tools: import("@openai/agents").Tool[];
+}) {
+  const { Agent, run, tool } = await import("@openai/agents");
+
   const readFileTool = tool({
     name: "Read",
     description: "Read a file from the filesystem and return its contents.",
-    parameters: z.object({
-      file_path: z.string().describe("Absolute path to the file to read"),
-    }),
+    parameters: z.object({ file_path: z.string() }),
     execute: async (input: { file_path: string }) => {
       try {
         return await fs.readFile(input.file_path, "utf8");
@@ -94,17 +146,10 @@ function makeFileSystemTools(root: string) {
   const globTool = tool({
     name: "Glob",
     description: "Find files matching a glob pattern. Searches relative to the repository root.",
-    parameters: z.object({
-      pattern: z.string().describe("Glob pattern to match"),
-      cwd: z.string().nullable().optional().describe("Directory to search from (defaults to repo root)"),
-    }),
+    parameters: z.object({ pattern: z.string(), cwd: z.string().nullable().optional() }),
     execute: async (input: { pattern: string; cwd?: string | null }) => {
       try {
-        const matches = await fg(input.pattern, {
-          cwd: input.cwd ?? root,
-          absolute: true,
-          dot: false,
-        });
+        const matches = await fg(input.pattern, { cwd: input.cwd ?? opts.root, absolute: true, dot: false });
         return matches.join("\n") || "(no matches)";
       } catch (e) {
         return `Error: ${(e as Error).message}`;
@@ -114,17 +159,11 @@ function makeFileSystemTools(root: string) {
 
   const bashTool = tool({
     name: "Bash",
-    description:
-      "Execute a bash command in the repository root. Returns stdout; stderr is appended if non-empty.",
-    parameters: z.object({
-      command: z.string().describe("The shell command to run"),
-    }),
+    description: "Execute a bash command in the repository root. Returns stdout; stderr is appended if non-empty.",
+    parameters: z.object({ command: z.string() }),
     execute: async (input: { command: string }) => {
       try {
-        const { stdout, stderr } = await execAsync(input.command, {
-          cwd: root,
-          timeout: 30_000,
-        });
+        const { stdout, stderr } = await execAsync(input.command, { cwd: opts.root, timeout: 30_000 });
         return stdout + (stderr ? `\nSTDERR: ${stderr}` : "");
       } catch (e) {
         return `Error: ${(e as Error).message}`;
@@ -134,13 +173,9 @@ function makeFileSystemTools(root: string) {
 
   const webSearchTool = tool({
     name: "WebSearch",
-    description:
-      "Search the web for authoritative sources on a translation term or legal phrase. Returns a brief summary of findings.",
-    parameters: z.object({
-      query: z.string().describe("The search query"),
-    }),
+    description: "Search the web for authoritative sources on a translation term or legal phrase.",
+    parameters: z.object({ query: z.string() }),
     execute: async (input: { query: string }) => {
-      // Requires OPENAI_API_KEY with web search access. Falls back gracefully.
       try {
         const { default: OpenAI } = await import("openai");
         const openai = new OpenAI();
@@ -157,13 +192,131 @@ function makeFileSystemTools(root: string) {
           .join("\n");
         return text ?? "(no results)";
       } catch {
-        return `(web search unavailable — treat webScore as 0.6 for a single uncertain source)`;
+        return "(web search unavailable — treat webScore as 0.6 for a single uncertain source)";
       }
     },
   });
 
-  return { readFileTool, globTool, bashTool, webSearchTool };
+  const allTools = [
+    ...opts.tools,
+    readFileTool,
+    globTool,
+    bashTool,
+    ...(opts.webValidate ? [webSearchTool] : []),
+  ];
+
+  const agent = new Agent({
+    name: "Translations Agent",
+    instructions: opts.systemPrompt,
+    model: opts.model,
+    tools: allTools,
+  });
+
+  const maxTurns = Math.max(80, opts.taskCount * 12);
+  const streamedResult = await run(agent, "Begin. Call next_task() to start.", {
+    stream: true,
+    maxTurns,
+  });
+
+  for await (const event of streamedResult) {
+    if (event.type === "run_item_stream_event") {
+      const item = event.item;
+      if (item.type === "message_output_item") {
+        const content = (item.rawItem as { content?: Array<{ type: string; text?: string }> }).content ?? [];
+        for (const block of content) {
+          if (block.type === "output_text" && block.text) {
+            process.stdout.write(block.text);
+          }
+        }
+      }
+    }
+  }
+
+  const finalOutput = streamedResult.finalOutput;
+  if (finalOutput && typeof finalOutput === "string" && finalOutput.trim()) {
+    process.stdout.write(finalOutput + "\n");
+  } else {
+    process.stdout.write("\n");
+  }
 }
+
+// ── Anthropic execution path ───────────────────────────────────────────────────
+
+async function runAnthropic(opts: {
+  model: string;
+  systemPrompt: string;
+  root: string;
+  webValidate: boolean;
+  taskCount: number;
+  server: import("@anthropic-ai/claude-agent-sdk").McpSdkServerConfigWithInstance;
+  toolNames: string[];
+}) {
+  const { query } = await import("@anthropic-ai/claude-agent-sdk");
+
+  const builtInTools: string[] = ["Read", "Glob", "Bash"];
+  if (opts.webValidate) builtInTools.push("WebSearch");
+
+  const allowedTools = [...opts.toolNames, ...builtInTools];
+  const maxTurns = Math.max(80, opts.taskCount * 12);
+
+  const q = query({
+    prompt: "Begin. Call next_task() to start.",
+    options: {
+      cwd: opts.root,
+      model: opts.model,
+      systemPrompt: opts.systemPrompt,
+      mcpServers: { localizer: opts.server },
+      allowedTools,
+      tools: builtInTools,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      maxTurns,
+    },
+  });
+
+  for await (const message of q) {
+    if (message.type === "assistant") {
+      const blocks = (message.message as { content: Array<{ type: string; text?: string }> }).content;
+      for (const block of blocks) {
+        if (block.type === "text" && block.text) {
+          process.stdout.write(block.text);
+        }
+      }
+    } else if (message.type === "result") {
+      if (message.subtype === "success") {
+        console.log("\n");
+      } else {
+        console.error(`\nAgent ended with: ${message.subtype}`);
+      }
+      break;
+    }
+  }
+}
+
+// ── Report ─────────────────────────────────────────────────────────────────────
+
+function printReport(r: ReportStats) {
+  console.log(`\nLocalization Agent Complete\n`);
+  console.log(`Detected:`);
+  console.log(`- ${r.detectedBundles} bundle${r.detectedBundles === 1 ? "" : "s"}`);
+  console.log(`- source locale: ${r.sourceLocale}`);
+  console.log(`- target locales: ${r.targetLocales.join(", ")}`);
+  console.log(`\nChanges:`);
+  console.log(`- ${r.changedKeys} changed key${r.changedKeys === 1 ? "" : "s"}`);
+  console.log(`- ${r.translatedAuto} translated automatically`);
+  console.log(`- ${r.flaggedForReview} flagged for review`);
+  console.log(`\nUpdated:`);
+  for (const f of r.updatedFiles) console.log(`- ${f}`);
+  if (r.reviewKeys.length > 0) {
+    console.log(`\nReview Required:`);
+    for (const k of r.reviewKeys)
+      console.log(`- ${k.bundle}/${k.locale}: ${k.keyPath}${k.reason ? ` (${k.reason})` : ""}`);
+  }
+  console.log(`\nExecution finished successfully.`);
+  console.log(`Run the agent again after future repository changes.`);
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────────
 
 async function main() {
   const cli = parseArgs(process.argv.slice(2));
@@ -172,12 +325,10 @@ async function main() {
     process.exit(0);
   }
 
-  if (!process.env.OPENAI_API_KEY) {
-    console.error("ERROR: OPENAI_API_KEY is not set. Add it to your environment or .env file.");
-    process.exit(1);
-  }
+  const provider = await detectProvider();
+  const model = cli.model ?? (provider === "openai" ? "gpt-4.5" : "claude-opus-4-7");
 
-  console.log(`translations-agent`);
+  console.log(`translations-agent  [provider: ${provider}, model: ${model}]`);
   console.log(`Root: ${cli.root}`);
 
   if (!(await isGitRepo(cli.root))) {
@@ -258,22 +409,17 @@ async function main() {
   const localeRules = JSON.parse(localeRulesRaw) as Record<string, unknown>;
 
   let finalReport: ReportStats | null = null;
-  const { tools: mcpTools, toolNames } = buildMcpServer({
+  const commonDeps = {
     tasks,
     bundles,
     glossary,
     localeRules,
     webValidationEnabled: cli.webValidate,
-    onReport: (s) => {
-      finalReport = s;
-    },
-    log: (msg) => {
-      if (process.env.DEBUG_TRACE) console.log(`  ${msg}`);
-    },
-  });
+    onReport: (s: ReportStats) => { finalReport = s; },
+    log: (msg: string) => { if (process.env.DEBUG_TRACE) console.log(`  ${msg}`); },
+  };
 
-  const previewCount = Math.min(5, tasks.length);
-  const queuePreview = tasks.slice(0, previewCount).map((t) => ({
+  const queuePreview = tasks.slice(0, 5).map((t) => ({
     taskId: t.taskId,
     bundleId: t.bundleId,
     targetLocale: t.targetLocale,
@@ -281,60 +427,28 @@ async function main() {
     placement: t.placement,
   }));
 
-  const systemPrompt = await buildSystemPrompt({
-    bundleCount: bundles.length,
-    taskCount: tasks.length,
-    queuePreview,
-    webValidationEnabled: cli.webValidate,
-    toolNames,
-  });
+  console.log(`\n→ Launching agent (${provider})…\n`);
 
-  const { readFileTool, globTool, bashTool, webSearchTool } = makeFileSystemTools(cli.root);
-
-  const allTools = [
-    ...mcpTools,
-    readFileTool,
-    globTool,
-    bashTool,
-    ...(cli.webValidate ? [webSearchTool] : []),
-  ];
-
-  console.log("\n→ Launching agent…\n");
-
-  const agent = new Agent({
-    name: "Translations Agent",
-    instructions: systemPrompt,
-    model: cli.model,
-    tools: allTools,
-  });
-
-  const maxTurns = Math.max(80, tasks.length * 12);
-
-  const streamedResult = await run(agent, "Begin. Call next_task() to start.", {
-    stream: true,
-    maxTurns,
-  });
-
-  for await (const event of streamedResult) {
-    if (event.type === "run_item_stream_event") {
-      const item = event.item;
-      if (item.type === "message_output_item") {
-        const content = (item.rawItem as { content?: Array<{ type: string; text?: string }> })
-          .content ?? [];
-        for (const block of content) {
-          if (block.type === "output_text" && block.text) {
-            process.stdout.write(block.text);
-          }
-        }
-      }
-    }
-  }
-
-  const finalOutput = streamedResult.finalOutput;
-  if (finalOutput && typeof finalOutput === "string" && finalOutput.trim()) {
-    process.stdout.write(finalOutput + "\n");
+  if (provider === "openai") {
+    const { tools, toolNames } = buildOpenAITools(commonDeps);
+    const systemPrompt = await buildSystemPrompt({
+      bundleCount: bundles.length,
+      taskCount: tasks.length,
+      queuePreview,
+      webValidationEnabled: cli.webValidate,
+      toolNames,
+    });
+    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools });
   } else {
-    process.stdout.write("\n");
+    const { server, toolNames } = buildAnthropicServer(commonDeps);
+    const systemPrompt = await buildSystemPrompt({
+      bundleCount: bundles.length,
+      taskCount: tasks.length,
+      queuePreview,
+      webValidationEnabled: cli.webValidate,
+      toolNames,
+    });
+    await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames });
   }
 
   if (finalReport) {
@@ -344,27 +458,6 @@ async function main() {
 
   console.error("\nAgent finished without emitting a report. Some translations may not have been written.");
   process.exit(2);
-}
-
-function printReport(r: ReportStats) {
-  console.log(`\nLocalization Agent Complete\n`);
-  console.log(`Detected:`);
-  console.log(`- ${r.detectedBundles} bundle${r.detectedBundles === 1 ? "" : "s"}`);
-  console.log(`- source locale: ${r.sourceLocale}`);
-  console.log(`- target locales: ${r.targetLocales.join(", ")}`);
-  console.log(`\nChanges:`);
-  console.log(`- ${r.changedKeys} changed key${r.changedKeys === 1 ? "" : "s"}`);
-  console.log(`- ${r.translatedAuto} translated automatically`);
-  console.log(`- ${r.flaggedForReview} flagged for review`);
-  console.log(`\nUpdated:`);
-  for (const f of r.updatedFiles) console.log(`- ${f}`);
-  if (r.reviewKeys.length > 0) {
-    console.log(`\nReview Required:`);
-    for (const k of r.reviewKeys)
-      console.log(`- ${k.bundle}/${k.locale}: ${k.keyPath}${k.reason ? ` (${k.reason})` : ""}`);
-  }
-  console.log(`\nExecution finished successfully.`);
-  console.log(`Run the agent again after future repository changes.`);
 }
 
 main().catch((err) => {

@@ -1,0 +1,218 @@
+import { z } from "zod";
+import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { makeHandlers, type ServerDeps, type ReportStats } from "./tools-core.js";
+
+export type { ServerDeps, ReportStats };
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+type AnthropicResult = {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: true;
+};
+
+function wrapResult(jsonStr: string): AnthropicResult {
+  let isError = false;
+  try {
+    const parsed = JSON.parse(jsonStr);
+    isError = typeof parsed === "object" && parsed !== null && "error" in parsed;
+  } catch {
+    // not JSON — treat as success text
+  }
+  return {
+    content: [{ type: "text", text: jsonStr }],
+    ...(isError ? { isError: true as const } : {}),
+  };
+}
+
+// ── Tool builder ───────────────────────────────────────────────────────────────
+
+export function buildAnthropicServer(deps: ServerDeps) {
+  const h = makeHandlers(deps);
+
+  const allTools = [
+    tool(
+      "next_task",
+      "Dequeue the next translation task from the work queue. Returns null when the queue is drained. Always call this before starting a new task.",
+      {},
+      async () => wrapResult(await h.nextTask()),
+    ),
+
+    tool(
+      "normalize_text",
+      "Normalize the source text: collapse whitespace and mask placeholders ({{x}}, {x}, ${x}, %s, %d) as __PH0__..__PHn__. MUST be called as step 1 of the pipeline.",
+      { taskId: z.string(), text: z.string() },
+      async ({ taskId, text }: { taskId: string; text: string }) =>
+        wrapResult(await h.normalizeText({ taskId, text })),
+    ),
+
+    tool(
+      "search_glossary",
+      "Look up curated glossary terms in the source text for the given target locale. MUST be called as step 2. Returns matches with translations and keepEnglish flag.",
+      {
+        taskId: z.string(),
+        text: z.string(),
+        sourceLocale: z.string(),
+        targetLocale: z.string(),
+        traceToken: z.string(),
+      },
+      async ({
+        taskId,
+        text,
+        sourceLocale,
+        targetLocale,
+        traceToken,
+      }: {
+        taskId: string;
+        text: string;
+        sourceLocale: string;
+        targetLocale: string;
+        traceToken: string;
+      }) => wrapResult(await h.searchGlossary({ taskId, text, sourceLocale, targetLocale, traceToken })),
+    ),
+
+    tool(
+      "classify_domain",
+      "Classify the source text into a domain (eDiscovery, Legal, Tech, or general) by keyword matching. MUST be called as step 3.",
+      { taskId: z.string(), text: z.string(), traceToken: z.string() },
+      async ({ taskId, text, traceToken }: { taskId: string; text: string; traceToken: string }) =>
+        wrapResult(await h.classifyDomain({ taskId, text, traceToken })),
+    ),
+
+    tool(
+      "get_locale_rules",
+      "Fetch formality, spelling, anti-patterns, structure rules, and placement constraints for the target locale. MUST be called as step 4.",
+      {
+        taskId: z.string(),
+        locale: z.string(),
+        placement: z.string().optional(),
+        traceToken: z.string(),
+      },
+      async ({
+        taskId,
+        locale,
+        placement,
+        traceToken,
+      }: {
+        taskId: string;
+        locale: string;
+        placement?: string;
+        traceToken: string;
+      }) => wrapResult(await h.getLocaleRules({ taskId, locale, placement, traceToken })),
+    ),
+
+    tool(
+      "validate_translation",
+      "Validate the candidate translation: placeholder structure equality + locale rule checks. Requires the chain of traceTokens from the prior 4 steps. Returns issues (with codes) and structureScore + localeScore. MUST be called as step 6.",
+      {
+        taskId: z.string(),
+        source: z.string(),
+        translation: z.string(),
+        locale: z.string(),
+        placeholders: z.array(z.object({ token: z.string(), original: z.string() })),
+        traceTokens: z.array(z.string()),
+      },
+      async ({
+        taskId,
+        source,
+        translation,
+        locale,
+        placeholders,
+        traceTokens,
+      }: {
+        taskId: string;
+        source: string;
+        translation: string;
+        locale: string;
+        placeholders: Array<{ token: string; original: string }>;
+        traceTokens: string[];
+      }) =>
+        wrapResult(
+          await h.validateTranslation({ taskId, source, translation, locale, placeholders, traceTokens }),
+        ),
+    ),
+
+    tool(
+      "score_confidence",
+      "Compute overall confidence: web*0.45 + locale*0.40 + structure*0.15 (or locale/structure renormalized if web omitted). Returns {total, tier}: tier is auto (>0.95), optional (>=0.85), escalate (>=0.70), or mandatory (<0.70). MUST be called as step 8.",
+      {
+        taskId: z.string(),
+        webScore: z.number().optional(),
+        localeScore: z.number(),
+        structureScore: z.number(),
+      },
+      async ({
+        taskId,
+        webScore,
+        localeScore,
+        structureScore,
+      }: {
+        taskId: string;
+        webScore?: number;
+        localeScore: number;
+        structureScore: number;
+      }) => wrapResult(await h.scoreConfidence({ taskId, webScore, localeScore, structureScore })),
+    ),
+
+    tool(
+      "read_locale_file",
+      "Read the current content of a target locale file in a bundle (read-only). Use this to consult neighboring keys for tone/terminology consistency.",
+      { bundleId: z.string(), locale: z.string() },
+      async ({ bundleId, locale }: { bundleId: string; locale: string }) =>
+        wrapResult(await h.readLocaleFile({ bundleId, locale })),
+    ),
+
+    tool(
+      "commit_bundle",
+      "Persist translation updates for a single bundle. The host re-runs placeholder structure checks server-side and rejects any structurally-broken updates. Updates with needsReview=true bypass the structure check and write a sibling `<keyPath>__needsReview: true` key. Use this — never use raw Write on locale JSON.",
+      {
+        bundleId: z.string(),
+        updates: z.array(
+          z.object({
+            targetLocale: z.string(),
+            keyPath: z.string(),
+            value: z.string(),
+            needsReview: z.boolean(),
+            failureReason: z.string().optional(),
+          }),
+        ),
+      },
+      async ({
+        bundleId,
+        updates,
+      }: {
+        bundleId: string;
+        updates: Array<{
+          targetLocale: string;
+          keyPath: string;
+          value: string;
+          needsReview: boolean;
+          failureReason?: string;
+        }>;
+      }) => wrapResult(await h.commitBundle({ bundleId, updates })),
+    ),
+
+    tool(
+      "emit_report",
+      "Emit the final localization report. Call this exactly once after the work queue is drained.",
+      {
+        stats: z
+          .string()
+          .describe(
+            "JSON-serialized tally of the agent's translation run (call JSON.stringify on your stats object before passing).",
+          ),
+      },
+      async ({ stats }: { stats: string }) => wrapResult(await h.emitReport({ stats })),
+    ),
+  ];
+
+  const toolNames = allTools.map((t) => `mcp__localizer__${t.name}`);
+
+  const server = createSdkMcpServer({
+    name: "localizer",
+    version: "0.1.0",
+    tools: allTools,
+  });
+
+  return { server, toolNames };
+}

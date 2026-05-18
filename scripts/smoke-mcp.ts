@@ -4,10 +4,12 @@ import { scanRepository } from "../agent/repository.js";
 import { detectChangedKeys } from "../agent/git.js";
 import { buildWorkQueue } from "../agent/work-queue.js";
 import { buildGlossary, type LocaleEntries } from "../lib/glossary.js";
-import { buildMcpServer } from "../agent/tools.js";
+import { buildOpenAITools } from "../agent/tools-openai.js";
+import { buildAnthropicServer } from "../agent/tools-anthropic.js";
 import { buildSystemPrompt } from "../agent/system-prompt.js";
 
 const root = path.resolve(process.argv[2] ?? "fixtures/sample-repo");
+const provider = (process.argv[3] ?? "openai") as "openai" | "anthropic";
 
 async function main() {
   const bundles = await scanRepository(root);
@@ -19,17 +21,23 @@ async function main() {
 
   const localeEntries: LocaleEntries[] = [];
   const seen = new Set<string>();
-  for (const b of bundles) for (const f of [b.sourceFile, ...b.targets]) {
-    if (seen.has(f.absPath)) continue;
-    seen.add(f.absPath);
-    localeEntries.push({ locale: f.locale, entries: f.entries });
-  }
+  for (const b of bundles)
+    for (const f of [b.sourceFile, ...b.targets]) {
+      if (seen.has(f.absPath)) continue;
+      seen.add(f.absPath);
+      localeEntries.push({ locale: f.locale, entries: f.entries });
+    }
   const glossary = buildGlossary(localeEntries, bundles[0]!.sourceLocale);
 
-  const rulesPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "data", "locale-rules.json");
+  const rulesPath = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    "..",
+    "data",
+    "locale-rules.json",
+  );
   const localeRules = JSON.parse(await fs.readFile(rulesPath, "utf8"));
 
-  const { server, toolNames } = buildMcpServer({
+  const commonDeps = {
     tasks,
     bundles,
     glossary,
@@ -37,10 +45,22 @@ async function main() {
     webValidationEnabled: false,
     onReport: () => {},
     log: () => {},
-  });
+  };
 
-  console.log("Server built. Tools:");
-  for (const n of toolNames) console.log(`  ${n}`);
+  let toolNames: string[];
+
+  if (provider === "anthropic") {
+    const { server, toolNames: names } = buildAnthropicServer(commonDeps);
+    toolNames = names;
+    console.log(`\nAnthropic MCP server built. Tools:`);
+    for (const n of toolNames) console.log(`  ${n}`);
+    console.log(`\nMcp server config keys: ${Object.keys(server).join(", ")}`);
+  } else {
+    const { tools, toolNames: names } = buildOpenAITools(commonDeps);
+    toolNames = names;
+    console.log(`\nOpenAI tools built (${tools.length} tools):`);
+    for (const n of toolNames) console.log(`  ${n}`);
+  }
 
   const prompt = await buildSystemPrompt({
     bundleCount: bundles.length,
@@ -59,9 +79,6 @@ async function main() {
   console.log(`\n----- PROMPT PREVIEW (first 1200 chars) -----`);
   console.log(prompt.slice(0, 1200));
   console.log(`\n----- END PREVIEW -----`);
-
-  // Probe server instance shape minimally — confirm the config-with-instance is set
-  console.log(`\nMcp server config keys: ${Object.keys(server).join(", ")}`);
 }
 
 main().catch((e) => {
