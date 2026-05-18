@@ -96,9 +96,9 @@ function makeFileSystemTools(root: string) {
     description: "Find files matching a glob pattern. Searches relative to the repository root.",
     parameters: z.object({
       pattern: z.string().describe("Glob pattern to match"),
-      cwd: z.string().optional().describe("Directory to search from (defaults to repo root)"),
+      cwd: z.string().nullable().optional().describe("Directory to search from (defaults to repo root)"),
     }),
-    execute: async (input: { pattern: string; cwd?: string }) => {
+    execute: async (input: { pattern: string; cwd?: string | null }) => {
       try {
         const matches = await fg(input.pattern, {
           cwd: input.cwd ?? root,
