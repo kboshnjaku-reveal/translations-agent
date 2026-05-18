@@ -221,7 +221,10 @@ async function runOpenAI(opts: {
   for await (const event of streamedResult) {
     if (event.type === "run_item_stream_event") {
       const item = event.item;
-      if (item.type === "message_output_item") {
+      if (item.type === "tool_call_item") {
+        const call = item.rawItem as { name?: string };
+        if (call.name) process.stdout.write(`  → [tool] ${call.name}\n`);
+      } else if (item.type === "message_output_item") {
         const content = (item.rawItem as { content?: Array<{ type: string; text?: string }> }).content ?? [];
         for (const block of content) {
           if (block.type === "output_text" && block.text) {
@@ -276,10 +279,12 @@ async function runAnthropic(opts: {
 
   for await (const message of q) {
     if (message.type === "assistant") {
-      const blocks = (message.message as { content: Array<{ type: string; text?: string }> }).content;
+      const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) {
           process.stdout.write(block.text);
+        } else if (block.type === "tool_use" && block.name) {
+          process.stdout.write(`  → [tool] ${block.name}\n`);
         }
       }
     } else if (message.type === "result") {
@@ -416,7 +421,7 @@ async function main() {
     localeRules,
     webValidationEnabled: cli.webValidate,
     onReport: (s: ReportStats) => { finalReport = s; },
-    log: (msg: string) => { if (process.env.DEBUG_TRACE) console.log(`  ${msg}`); },
+    log: (msg: string) => console.log(`  ${msg}`),
   };
 
   const queuePreview = tasks.slice(0, 5).map((t) => ({
