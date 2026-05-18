@@ -53,11 +53,11 @@ Options:
   --web-validate              Enable web search validation for ambiguous/legal content
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
-  --model <name>              Override the model (default: gpt-4.5 for OpenAI, claude-opus-4-7 for Anthropic)
+  --model <name>              Override the model (default: gpt-5.5 for OpenAI, claude-opus-4-7 for Anthropic)
   --help, -h                  Show this help message
 
 Provider selection (set one key in your .env or environment):
-  OPENAI_API_KEY              Uses OpenAI agents SDK (gpt-4.5)
+  OPENAI_API_KEY              Uses OpenAI agents SDK (gpt-5.5)
   ANTHROPIC_API_KEY           Uses Anthropic Claude agent SDK (claude-opus-4-7)
 
 If both keys are set, the agent will ask which provider to use at startup.
@@ -81,7 +81,7 @@ ERROR: No API key found.
 
 Set one of the following in your .env file or environment:
 
-  OPENAI_API_KEY=<key>       → uses OpenAI agents SDK  (default model: gpt-4.5)
+  OPENAI_API_KEY=<key>       → uses OpenAI agents SDK  (default model: gpt-5.5)
   ANTHROPIC_API_KEY=<key>    → uses Anthropic Claude SDK (default model: claude-opus-4-7)
 `);
   process.exit(1);
@@ -90,7 +90,7 @@ Set one of the following in your .env file or environment:
 async function askProviderChoice(): Promise<Provider> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   console.log("\nBoth OPENAI_API_KEY and ANTHROPIC_API_KEY are set.");
-  console.log("  1) OpenAI    (default model: gpt-4.5)");
+  console.log("  1) OpenAI    (default model: gpt-5.5)");
   console.log("  2) Anthropic (default model: claude-opus-4-7)");
   const answer = await new Promise<string>((resolve) =>
     rl.question("\nWhich provider should be used? Enter 1 or 2: ", resolve),
@@ -326,7 +326,7 @@ async function main() {
   }
 
   const provider = await detectProvider();
-  const model = cli.model ?? (provider === "openai" ? "gpt-4.5" : "claude-opus-4-7");
+  const model = cli.model ?? (provider === "openai" ? "gpt-5.5" : "claude-opus-4-7");
 
   console.log(`translations-agent  [provider: ${provider}, model: ${model}]`);
   console.log(`Root: ${cli.root}`);
