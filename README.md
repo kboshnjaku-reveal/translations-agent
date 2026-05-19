@@ -87,7 +87,8 @@ The agent will ask for confirmation before writing anything.
 
 | Flag | What it does |
 |---|---|
-| `--web-validate` | Cross-checks ambiguous or legal phrases against live web sources before committing |
+| `--no-web-validate` | Disable web search validation for ambiguous or legal phrases (enabled by default) |
+| `--no-glossary` | Disable glossary matching (useful for testing raw model output) |
 | `--source-locale <code>` | Override auto-detection of the source language (e.g. `--source-locale en-US`) |
 | `--root <path>` | Point to a different directory instead of the current working directory |
 | `--model <name>` | Use a specific model (e.g. `--model gpt-4o-mini`). Defaults to `gpt-4o` for OpenAI and `claude-opus-4-7` for Anthropic |
@@ -96,7 +97,7 @@ The agent will ask for confirmation before writing anything.
 ### Examples
 
 ```bash
-# Basic run — detects provider from .env, translates changed keys
+# Basic run — detects provider from .env, translates changed keys (web validation on by default)
 translations-agent
 
 # Use a different model
@@ -105,8 +106,11 @@ translations-agent --model gpt-4o-mini
 # Operate on a repo in another folder
 translations-agent --root ../my-app
 
-# Force a specific source locale and enable web validation
-translations-agent --source-locale en-US --web-validate
+# Force a specific source locale and disable web validation
+translations-agent --source-locale en-US --no-web-validate
+
+# Skip glossary matching to test raw model output
+translations-agent --no-glossary
 ```
 
 ---
