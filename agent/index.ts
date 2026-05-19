@@ -32,11 +32,11 @@ type Cli = {
 };
 
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = { webValidate: false, noGlossary: false, root: process.cwd(), help: false };
+  const cli: Cli = { webValidate: true, noGlossary: false, root: process.cwd(), help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") cli.help = true;
-    else if (a === "--web-validate") cli.webValidate = true;
+    else if (a === "--no-web-validate") cli.webValidate = false;
     else if (a === "--no-glossary") cli.noGlossary = true;
     else if (a === "--source-locale") cli.sourceLocale = argv[++i];
     else if (a === "--root") cli.root = path.resolve(argv[++i] ?? process.cwd());
@@ -52,7 +52,7 @@ Usage:
   translations-agent [options]
 
 Options:
-  --web-validate              Enable web search validation for ambiguous/legal content
+  --no-web-validate           Disable web search validation for ambiguous/legal content
   --no-glossary               Disable glossary matching (useful for testing raw model output)
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
