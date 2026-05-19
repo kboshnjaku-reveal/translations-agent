@@ -117,12 +117,11 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
 export function findMatches(glossary: GlossaryEntry[], text: string, targetLocale: string): GlossaryMatch[] {
   const matches: GlossaryMatch[] = [];
   const consumedRanges: Array<[number, number]> = [];
-  const normalizedText = text;
 
   for (const entry of glossary) {
     const re = new RegExp(`\\b${escapeRegex(entry.source)}\\b`, "gi");
     let m: RegExpExecArray | null;
-    while ((m = re.exec(normalizedText)) !== null) {
+    while ((m = re.exec(text)) !== null) {
       const start = m.index;
       const end = start + m[0].length;
       if (consumedRanges.some(([s, e]) => start < e && end > s)) continue;

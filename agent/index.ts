@@ -24,6 +24,7 @@ type Provider = "openai" | "anthropic";
 
 type Cli = {
   webValidate: boolean;
+  noGlossary: boolean;
   sourceLocale?: string;
   root: string;
   model?: string;
@@ -31,11 +32,12 @@ type Cli = {
 };
 
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = { webValidate: false, root: process.cwd(), help: false };
+  const cli: Cli = { webValidate: false, noGlossary: false, root: process.cwd(), help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") cli.help = true;
     else if (a === "--web-validate") cli.webValidate = true;
+    else if (a === "--no-glossary") cli.noGlossary = true;
     else if (a === "--source-locale") cli.sourceLocale = argv[++i];
     else if (a === "--root") cli.root = path.resolve(argv[++i] ?? process.cwd());
     else if (a === "--model") cli.model = argv[++i];
@@ -51,6 +53,7 @@ Usage:
 
 Options:
   --web-validate              Enable web search validation for ambiguous/legal content
+  --no-glossary               Disable glossary matching (useful for testing raw model output)
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
   --model <name>              Override the model (default: gpt-4o for OpenAI, claude-opus-4-7 for Anthropic)
@@ -401,8 +404,10 @@ async function main() {
       localeEntries.push({ locale: file.locale, entries: file.entries });
     }
   }
-  const glossary = buildGlossary(localeEntries, bundles[0]!.sourceLocale);
-  console.log(`  Glossary: ${glossary.length} entries auto-built from existing translations.`);
+  const glossary = cli.noGlossary ? [] : buildGlossary(localeEntries, bundles[0]!.sourceLocale);
+  console.log(cli.noGlossary
+    ? "  Glossary: disabled (--no-glossary)"
+    : `  Glossary: ${glossary.length} entries auto-built from existing translations.`);
 
   const localeRulesPath = path.resolve(
     path.dirname(new URL(import.meta.url).pathname),
