@@ -114,6 +114,15 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
   return dedupeOverlaps(glossary);
 }
 
+// Merge seed entries (manually curated) with auto-built ones. Seed wins for any source term it covers.
+export function mergeWithSeed(autoBuilt: GlossaryEntry[], seed: GlossaryEntry[]): GlossaryEntry[] {
+  const seedSources = new Set(seed.map((e) => normalize(e.source)));
+  const filtered = autoBuilt.filter((e) => !seedSources.has(normalize(e.source)));
+  const merged = [...seed, ...filtered];
+  merged.sort((a, b) => b.source.length - a.source.length);
+  return dedupeOverlaps(merged);
+}
+
 export function findMatches(glossary: GlossaryEntry[], text: string, targetLocale: string): GlossaryMatch[] {
   const matches: GlossaryMatch[] = [];
   const consumedRanges: Array<[number, number]> = [];

@@ -1,0 +1,121 @@
+[
+  {
+    "source": "Bates",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "ESI",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "eDiscovery",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "Relativity",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "Nuix",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "Concordance",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "Everlaw",
+    "translations": {},
+    "keepEnglish": true
+  },
+  {
+    "source": "Custodian",
+    "translations": {
+      "de": "Depotverwalter",
+      "es": "Custodio",
+      "fr": "Gardien",
+      "fr-CA": "Dépositaire",
+      "pt": "Custodiante",
+      "pt-PT": "Custodiante"
+    },
+    "keepEnglish": false
+  },
+  {
+    "source": "Legal Hold",
+    "translations": {
+      "de": "Rechtliche Sperre",
+      "es": "Retención legal",
+      "fr": "Base légale",
+      "fr-CA": "Détention légale",
+      "pt": "Retenção legal",
+      "pt-PT": "Detenção Legal"
+    },
+    "keepEnglish": false
+  },
+  {
+    "source": "Review Set",
+    "translations": {
+      "de": "Review-Set",
+      "es": "conjunto de revisión",
+      "fr": "set de révision",
+      "fr-CA": "ensemble d'examen",
+      "pt": "conjunto de revisão",
+      "pt-PT": "conjunto de revisão"
+    },
+    "keepEnglish": false
+  },
+  {
+    "source": "Redaction",
+    "translations": {
+      "de": "Redaktion",
+      "es": "Redacción",
+      "fr": "Rédaction",
+      "fr-CA": "Rédaction",
+      "pt": "Redação",
+      "pt-PT": "Redação"
+    },
+    "keepEnglish": false
+  },
+  {
+    "source": "Responsive",
+    "translations": {
+      "de": "Reaktionsschnell",
+      "es": "Responsivo",
+      "fr": "Réactif",
+      "fr-CA": "Réactif",
+      "pt": "Responsivo",
+      "pt-PT": "Responsive"
+    },
+    "keepEnglish": false
+  },
+  {
+    "source": "Non-responsive",
+    "translations": {
+      "de": "Reagiert nicht",
+      "es": "No responde",
+      "fr": "Ne répond pas",
+      "fr-CA": "Non répondants",
+      "pt": "Não responsivo",
+      "pt-PT": "Não responsivo"
+    },
+    "keepEnglish": false
+  },
+  {
+    "source": "Privilege",
+    "translations": {
+      "de": "Privileg",
+      "es": "Privilegio",
+      "fr": "Privilège",
+      "fr-CA": "Privilège",
+      "pt": "Privilégio",
+      "pt-PT": "Privilege"
+    },
+    "keepEnglish": false
+  }
+]

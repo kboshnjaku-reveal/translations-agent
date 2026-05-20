@@ -2,9 +2,22 @@
   "de": {
     "formality": "Use formal Sie-form (Sie, Ihnen, Ihr/Ihre). Never du, dich, dir, dein.",
     "spelling": "Use ß per current orthography (groß, Straße, Maßnahme). Use long-vowel ß rule; use ss only after short vowels (dass, muss).",
+    "quoteStyle": "Use „…“ for primary quotation and ‚…‘ for nested quotation. Never use straight quotes (\"/') or English-style curly quotes (“…”).",
     "antiPatterns": [
-      "Avoid English loanwords when a natural German equivalent exists (e.g., 'Datei' over 'File', 'Anwendung' over 'Application' for UI labels).",
-      "Avoid literal calques from English (e.g., 'macht Sinn' → prefer 'ist sinnvoll')."
+      "Avoid English loanwords when a natural German equivalent exists (e.g., 'Datei' over 'File', 'Anwendung' over 'Application', 'herunterladen' over 'downloaden', 'hochladen' over 'uploaden').",
+      "Avoid literal calques from English (e.g., 'macht Sinn' → prefer 'ist sinnvoll'; 'macht es einfach' → prefer 'vereinfacht es').",
+      "Avoid false friends: 'eventuell' means 'possibly', not 'eventually' (use 'schließlich' or 'letztendlich'); 'aktuell' means 'current', not 'actual' (use 'tatsächlich').",
+      "Avoid Denglish compound verbs (e.g., 'downloaden', 'updaten', 'liken') — prefer German equivalents where established."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively. When in doubt, prefer the more formal or literal rendering.",
+      "Keep 'Bates' untranslated (e.g., 'Bates-Nummer', 'Bates-Stempel') — it is a proper noun.",
+      "Custodian → 'Depotverwalter'.",
+      "Legal Hold → 'Rechtliche Sperre'.",
+      "Review Set → 'Review-Set' (keep the English noun; apply German article/inflection as needed).",
+      "Redact (verb) → 'Redigieren'; Redaction → 'Redaktion'.",
+      "Responsive → 'Reaktionsschnell'; Non-responsive → 'Reagiert nicht'.",
+      "Privilege → 'Privileg'."
     ],
     "jurisdiction": "Standard German (Germany). Default to DACH-neutral but lean German conventions for compound nouns.",
     "structureRules": [
@@ -16,10 +29,18 @@
   },
   "nl": {
     "formality": "Use formal u-form (u, uw). Never je, jij, jou, jouw, jullie.",
-    "spelling": "Use 'ij' digraph (tijd, zijn, bijlage). Never 'y' substitution.",
+    "spelling": "Use 'ij' digraph (tijd, zijn, bijlage). Never 'y' substitution. Use standard Dutch diacritics (é, ë, ï, ó, ö, ü) where required.",
+    "quoteStyle": "Use „…” for primary quotation in formal text. In digital product UI, ‘…’ (single) or “…” (double) curly quotes are acceptable. Never use straight quotes.",
     "antiPatterns": [
-      "Avoid Anglicisms when a Dutch equivalent is established (e.g., 'bijlage' over 'attachment' in formal contexts).",
-      "Avoid Belgian-Dutch variants in spelling (e.g., prefer 'gsm' only when source clearly intends mobile)."
+      "Avoid Anglicisms when a Dutch equivalent is established (e.g., 'bijlage' over 'attachment', 'bestand' over 'file', 'ophalen' over 'downloaden' in formal UI).",
+      "Avoid Belgian-Dutch (Flemish) variants: in formal UI use 'mobiele telefoon' or 'smartphone' rather than 'gsm'.",
+      "Avoid false friends: 'actueel' means 'current/topical', not 'actual' (use 'werkelijk' or 'daadwerkelijk'); 'eventueel' means 'possibly', not 'eventually' (use 'uiteindelijk').",
+      "Avoid over-literal English sentence structure — Dutch prefers verb-second word order and compound nouns over prepositional phrases."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively; prefer formal Dutch legal register.",
+      "Keep 'Bates' untranslated (e.g., 'Bates-nummer') — it is a proper noun.",
+      "CAUTION: Domain-specific eDiscovery terms for this locale (Custodian, Legal Hold, Review Set, Responsive, Privilege, Redaction) have not been verified against this product's existing translations. Translate conservatively."
     ],
     "jurisdiction": "Netherlands Dutch (Nederlands), not Flemish (Vlaams).",
     "structureRules": [
@@ -32,9 +53,22 @@
   "es": {
     "formality": "Use European Spanish formal register. Prefer 'usted' for direct address in legal/professional contexts.",
     "spelling": "Use inverted opening punctuation: ¿ before questions, ¡ before exclamations. Use European Spanish vocabulary.",
+    "quoteStyle": "Use «…» for primary quotation. Use “…” for nested quotation inside «». Never use straight quotes. Inverted punctuation (¿¡) must be preserved inside quotation marks.",
     "antiPatterns": [
       "Avoid Latin American vocabulary: prefer 'ordenador' over 'computadora', 'móvil' over 'celular', 'coche' over 'carro', 'piso' over 'departamento', 'zumo' over 'jugo'.",
-      "Avoid voseo (vos/vení/tomá) — strictly Peninsular forms."
+      "Avoid voseo (vos/vení/tomá) — strictly Peninsular forms.",
+      "Avoid false cognates: 'actualmente' means 'currently' (not 'actually' — use 'en realidad'); 'eventual' means 'possible/contingent' (not 'eventual' — use 'definitivo/final'); 'embarazada' means 'pregnant' (not 'embarrassed' — use 'avergonzado/a').",
+      "Avoid Spanglish compounds or direct English calques in UI labels (prefer 'pulsa' or 'selecciona' over 'haz clic' in formal UI)."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep ‘Bates’ untranslated (e.g., ‘número Bates’) — it is a proper noun.",
+      "Custodian → ‘Custodio’.",
+      "Legal Hold → ‘Retención legal’ (plural: ‘Retenciones legales’).",
+      "Review Set → ‘conjunto de revisión’.",
+      "Redact (verb) → ‘Redactar’; Redaction → ‘Redacción’.",
+      "Responsive → ‘Responsivo’; Non-responsive → ‘No responde’.",
+      "Privilege → ‘Privilegio’."
     ],
     "jurisdiction": "Spain (Peninsular Spanish). Spanish legal terms use Spain's civil code conventions.",
     "structureRules": [
@@ -46,38 +80,75 @@
   },
   "fr": {
     "formality": "Use formal vous-form. Never tu/te/toi/ton/ta/tes in product UI.",
-    "spelling": "Use French typographic conventions: non-breaking space before ; : ! ? » and after «.",
+    "spelling": "Use French typographic conventions: narrow no-break space (U+202F) before ; : ! ? » and after «. Accents are mandatory on capital letters (É, À, etc.).",
+    "quoteStyle": "Use « … » (guillemets with narrow no-break space U+202F inside) for primary quotation. Use “…” for nested quotation. Never use straight quotes or English-style curly quotes.",
     "antiPatterns": [
-      "Avoid English loanwords when an Académie-accepted French term exists (e.g., 'téléchargement' over 'download').",
-      "Avoid québécois-specific vocabulary (e.g., 'courriel' is acceptable but 'magasiner' is not in EU French)."
+      "Avoid English loanwords when an Académie française–accepted French term exists (e.g., 'téléchargement' over 'download', 'logiciel' over 'software', 'courriel' over 'email' in formal text).",
+      "Avoid québécois-specific vocabulary (e.g., 'magasiner', 'pogner', 'char') — use European French.",
+      "Avoid false friends: 'actuellement' means 'currently/at present', not 'actually' (use 'en fait' or 'en réalité'); 'éventuellement' means 'possibly/in due course', not 'eventually' (use 'finalement' or 'à terme'); 'librairie' means 'bookshop', not 'library' (use 'bibliothèque').",
+      "Avoid over-literal English word order — French sentence structure often differs; restructure for natural rhythm.",
+      "Avoid anglicised verbs formed by adding French endings to English roots (e.g., resist coinages like 'uploader' — use 'envoyer' or 'téléverser')."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep ‘Bates’ untranslated (e.g., ‘numéro Bates’) — it is a proper noun.",
+      "Custodian → ‘Gardien’. Note: fr-CA uses ‘Dépositaire’ instead.",
+      "Legal Hold → ‘Base légale’ (plural: ‘Bases légales’). Note: fr-CA uses ‘Détention légale’.",
+      "Review Set → ‘set de révision’. Note: fr-CA uses ‘ensemble d’examen’.",
+      "Redact (verb) → ‘Rédaction’; Redactions → ‘Rédactions’.",
+      "Responsive → ‘Réactif’; Non-responsive → ‘Ne répond pas’.",
+      "Privilege → ‘Privilège’."
     ],
     "jurisdiction": "France (français de France).",
     "structureRules": [
-      "Preserve placeholders exactly.",
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
       "Preserve ICU plural/select syntax.",
-      "Preserve HTML/XML tags and attributes."
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
     ]
   },
   "pt": {
-    "formality": "Use formal address. Default European Portuguese unless source specifies Brazilian.",
-    "spelling": "Use European Portuguese orthography (acordo ortográfico 1990 where applicable to PT-PT).",
+    "formality": "Use formal address (você or o/a senhor/a in formal legal contexts). Default European Portuguese unless source specifies Brazilian.",
+    "spelling": "Use European Portuguese orthography (acordo ortográfico 1990 where applicable to PT-PT). Retain European spelling where 1990 reform allows variation (e.g., 'facto' over 'fato' in legal register).",
+    "quoteStyle": "Use «…» for primary quotation in formal and legal text. Use “…” for nested quotation. In digital product UI, “…” curly quotes are acceptable but «» is preferred for legal content.",
     "antiPatterns": [
-      "Avoid Brazilian Portuguese vocabulary in EU PT context (e.g., 'ficheiro' over 'arquivo', 'rato' over 'mouse')."
+      "Avoid Brazilian Portuguese vocabulary in EU PT context: 'ficheiro' over 'arquivo', 'rato' over 'mouse', 'telemovel' over 'celular', 'ecrã' over 'tela'.",
+      "Avoid false friends: 'actualmente' (PT-PT) means 'currently', not 'actually' (use 'na verdade' or 'de facto'); 'eventual' means 'possible/contingent', not 'final' (use 'definitivo').",
+      "Avoid literal English calques in legal text — Portuguese legal register has established equivalents that must be preferred.",
+      "Avoid mixed register: do not combine formal 'o senhor' address with informal vocabulary in the same string."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep ‘Bates’ untranslated (e.g., ‘número Bates’) — it is a proper noun.",
+      "Custodian → ‘Custodiante’.",
+      "Legal Hold → ‘Retenção legal’ (plural: ‘Retenções legais’). Note: pt-PT uses ‘Detenção Legal’.",
+      "Review Set → ‘conjunto de revisão’.",
+      "Redact (verb) → ‘Redija’; Redaction → ‘Redação’.",
+      "Responsive → ‘Responsivo’; Non-responsive → ‘Não responsivo’. Note: pt-PT keeps ‘Responsive’ and ‘Privilege’ in English.",
+      "Privilege → ‘Privilégio’. Note: pt-PT keeps this as ‘Privilege’ (English)."
     ],
     "jurisdiction": "Portugal (Português de Portugal).",
     "structureRules": [
-      "Preserve placeholders exactly.",
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
       "Preserve ICU plural/select syntax.",
-      "Preserve HTML/XML tags and attributes."
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
     ]
   },
   "it": {
     "formality": "Use formal Lei-form (Lei, La, Le, Suo/Sua/Suoi/Sue). Never tu, ti, tuo, tua, tuoi, tue in product UI.",
-    "spelling": "Use correct Italian diacritics (à, è, é, ì, ò, ù). Never substitute an accent with an apostrophe (e.g., 'perché' not 'perche'').",
+    "spelling": "Use correct Italian diacritics (à, è, é, ì, ò, ù). Never substitute an accent with an apostrophe (e.g., 'perché' not 'perche''). Distinguish è (is) from é (stressed close-e vowel).",
+    "quoteStyle": "Use «…» (caporali) for primary quotation. Use “…” for nested quotation inside «». In digital product UI, “…” is acceptable. Never use straight quotes.",
     "antiPatterns": [
-      "Avoid English loanwords when an established Italian term exists (e.g., 'cartella' over 'folder' in descriptive text, 'scheda' over 'tab' in UI context where Italian is natural).",
+      "Avoid English loanwords when an established Italian term exists (e.g., 'cartella' over 'folder' in descriptive text, 'scheda' over 'tab', 'scarica' over 'download' as a verb).",
       "Avoid regional dialect forms; use standard Italian (italiano standard).",
-      "Avoid excessive nominalisations — prefer active verbal constructions."
+      "Avoid excessive nominalisations — prefer active verbal constructions.",
+      "Avoid false cognates: 'attuale' means 'current/present', not 'actual' (use 'effettivo' or 'reale'); 'eventuale' means 'possible/contingent', not 'eventual' (use 'finale' or 'definitivo'); 'pavimento' means 'floor', not 'pavement' (use 'marciapiede')."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep 'Bates' untranslated (e.g., 'numero Bates') — it is a proper noun.",
+      "CAUTION: Domain-specific eDiscovery terms for this locale (Custodian, Legal Hold, Review Set, Responsive, Privilege, Redaction) have not been verified against this product's existing translations. Translate conservatively."
     ],
     "jurisdiction": "Standard Italian (Italia). Business and legal context defaults to formal register.",
     "structureRules": [
@@ -90,10 +161,17 @@
   "da": {
     "formality": "Use second-person singular 'du' (universal in modern Danish business communication). The formal 'De' is archaic and must not be used in product UI.",
     "spelling": "Use Danish special characters: æ, ø, å. Never substitute with ASCII alternatives (ae/oe/aa).",
+    "quoteStyle": "Use »…« (typografiske anførselstegn) for primary quotation, or “…” curly quotes in digital UI. Never use straight quotes or English-style “…” opening-then-closing.",
     "antiPatterns": [
-      "Avoid English loanwords when a natural Danish equivalent exists (e.g., 'fil' over 'file', 'hent' over 'download' as a verb, 'indstillinger' over 'settings').",
-      "Avoid Norwegian (Bokmål/Nynorsk) or Swedish vocabulary.",
-      "Avoid archaic or literary forms not used in contemporary Danish."
+      "Avoid English loanwords when a natural Danish equivalent exists (e.g., 'fil' over 'file', 'hent' over 'download' as a verb, 'indstillinger' over 'settings', 'bruger' over 'user').",
+      "Avoid Norwegian (Bokmål/Nynorsk) or Swedish vocabulary that is not standard Danish.",
+      "Avoid archaic or literary forms not used in contemporary Danish.",
+      "Avoid false friends with Norwegian: 'rolig' in Danish means 'calm/quiet' (different from Norwegian 'rolig' = 'fun') — context matters."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep 'Bates' untranslated (e.g., 'Bates-nummer') — it is a proper noun.",
+      "CAUTION: Domain-specific eDiscovery terms for this locale (Custodian, Legal Hold, Review Set, Responsive, Privilege, Redaction) have not been verified against this product's existing translations. Translate conservatively."
     ],
     "jurisdiction": "Danish (Danmark). Standard modern Danish (rigsdansk).",
     "structureRules": [
@@ -105,11 +183,18 @@
   },
   "fi": {
     "formality": "Use second-person singular (sinä / 2nd-person verb form). The formal 'Te' (plural of respect) is archaic in modern Finnish product UI and must be avoided.",
-    "spelling": "Use Finnish special characters: ä, ö (å appears only in Swedish loanwords and proper names). Never substitute ä→a or ö→o.",
+    "spelling": "Use Finnish special characters: ä, ö (å appears only in Swedish loanwords and proper names). Never substitute ä→a or ö→o. Vowel harmony (front/back) must be respected in suffixes.",
+    "quoteStyle": "Use “…” for primary quotation (right double quotation mark for both opening and closing in modern Finnish digital practice). Single ‘…’ may be used for nested quotation. Never use straight quotes.",
     "antiPatterns": [
-      "Avoid direct English loanwords when a Finnish equivalent is established (e.g., 'tiedosto' over 'file', 'lataa' over 'download', 'käyttäjä' over 'user').",
+      "Avoid direct English loanwords when a Finnish equivalent is established (e.g., 'tiedosto' over 'file', 'lataa' over 'download', 'käyttäjä' over 'user', 'asetukset' over 'settings').",
       "Avoid Swedish loanwords when a native Finnish equivalent is well-established.",
-      "Avoid literal word-for-word calques from English — Finnish agglutinative structure often requires full sentence restructuring."
+      "Avoid literal word-for-word calques from English — Finnish agglutinative structure often requires full sentence restructuring.",
+      "Ensure vowel harmony in all suffixes: back vowels (a, o, u) pair with back-vowel suffixes; front vowels (ä, ö, y) pair with front-vowel suffixes (e.g., '-llä' not '-lla' after front vowels)."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep 'Bates' untranslated (e.g., 'Bates-numero') — it is a proper noun.",
+      "CAUTION: Domain-specific eDiscovery terms for this locale (Custodian, Legal Hold, Review Set, Responsive, Privilege, Redaction) have not been verified against this product's existing translations. Translate conservatively."
     ],
     "jurisdiction": "Finnish (Suomi, Finland). Standard modern Finnish.",
     "structureRules": [
@@ -122,10 +207,17 @@
   "sv": {
     "formality": "Use second-person singular 'du' (standard since the 1970s du-reform). The formal 'Ni' is archaic and must not appear in product UI.",
     "spelling": "Use Swedish special characters: å, ä, ö. Never substitute with ASCII alternatives (aa/ae/oe).",
+    "quoteStyle": "Use “…” for primary quotation (right double quotation mark for both opening and closing in modern Swedish practice). Single ‘…’ may be used for nested quotation. Avoid „…“ (German-style) and English-style “…”.",
     "antiPatterns": [
-      "Avoid English loanwords when a natural Swedish equivalent exists (e.g., 'fil' over 'file', 'ladda ned' over 'download', 'användare' over 'user', 'inställningar' over 'settings').",
-      "Avoid Norwegian or Danish vocabulary.",
-      "Avoid genitive constructions that mirror English 's — use Swedish prepositional or compound constructions where natural."
+      "Avoid English loanwords when a natural Swedish equivalent exists (e.g., 'fil' over 'file', 'ladda ned' over 'download', 'användare' over 'user', 'inställningar' over 'settings', 'skicka' over 'submit').",
+      "Avoid Norwegian or Danish vocabulary that is not standard Swedish.",
+      "Avoid genitive constructions that mirror English 's — use Swedish prepositional or compound constructions where natural.",
+      "Avoid false friends: 'aktuell' means 'current/topical', not 'actual' (use 'verklig' or 'faktisk'); 'eventuellt' means 'possibly', not 'eventually' (use 'slutligen' or 'i slutändan')."
+    ],
+    "domainNotes": [
+      "eDiscovery / legal domain: translate conservatively.",
+      "Keep 'Bates' untranslated (e.g., 'Bates-nummer') — it is a proper noun.",
+      "CAUTION: Domain-specific eDiscovery terms for this locale (Custodian, Legal Hold, Review Set, Responsive, Privilege, Redaction) have not been verified against this product's existing translations. Translate conservatively."
     ],
     "jurisdiction": "Swedish (Sverige). Standard Swedish (rikssvenska).",
     "structureRules": [

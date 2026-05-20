@@ -11,7 +11,7 @@ import { scanRepository } from "./repository.js";
 import { ensureCleanGitState, detectChangedKeys, isGitRepo } from "./git.js";
 import { buildWorkQueue } from "./work-queue.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import { buildGlossary, type LocaleEntries } from "../lib/glossary.js";
+import { buildGlossary, mergeWithSeed, type GlossaryEntry, type LocaleEntries } from "../lib/glossary.js";
 import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
 import type { ReportStats } from "./tools-core.js";
@@ -404,10 +404,16 @@ async function main() {
       localeEntries.push({ locale: file.locale, entries: file.entries });
     }
   }
-  const glossary = cli.noGlossary ? [] : buildGlossary(localeEntries, bundles[0]!.sourceLocale);
-  console.log(cli.noGlossary
-    ? "  Glossary: disabled (--no-glossary)"
-    : `  Glossary: ${glossary.length} entries auto-built from existing translations.`);
+  let glossary: GlossaryEntry[] = [];
+  if (!cli.noGlossary) {
+    const autoBuilt = buildGlossary(localeEntries, bundles[0]!.sourceLocale);
+    const seedPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "data", "glossary-seed.json");
+    const seed = JSON.parse(await fs.readFile(seedPath, "utf8")) as GlossaryEntry[];
+    glossary = mergeWithSeed(autoBuilt, seed);
+    console.log(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuilt.length} auto-built, after merge).`);
+  } else {
+    console.log("  Glossary: disabled (--no-glossary)");
+  }
 
   const localeRulesPath = path.resolve(
     path.dirname(new URL(import.meta.url).pathname),
