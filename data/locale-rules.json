@@ -71,6 +71,70 @@
       "Preserve HTML/XML tags and attributes."
     ]
   },
+  "it": {
+    "formality": "Use formal Lei-form (Lei, La, Le, Suo/Sua/Suoi/Sue). Never tu, ti, tuo, tua, tuoi, tue in product UI.",
+    "spelling": "Use correct Italian diacritics (à, è, é, ì, ò, ù). Never substitute an accent with an apostrophe (e.g., 'perché' not 'perche'').",
+    "antiPatterns": [
+      "Avoid English loanwords when an established Italian term exists (e.g., 'cartella' over 'folder' in descriptive text, 'scheda' over 'tab' in UI context where Italian is natural).",
+      "Avoid regional dialect forms; use standard Italian (italiano standard).",
+      "Avoid excessive nominalisations — prefer active verbal constructions."
+    ],
+    "jurisdiction": "Standard Italian (Italia). Business and legal context defaults to formal register.",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
+  "da": {
+    "formality": "Use second-person singular 'du' (universal in modern Danish business communication). The formal 'De' is archaic and must not be used in product UI.",
+    "spelling": "Use Danish special characters: æ, ø, å. Never substitute with ASCII alternatives (ae/oe/aa).",
+    "antiPatterns": [
+      "Avoid English loanwords when a natural Danish equivalent exists (e.g., 'fil' over 'file', 'hent' over 'download' as a verb, 'indstillinger' over 'settings').",
+      "Avoid Norwegian (Bokmål/Nynorsk) or Swedish vocabulary.",
+      "Avoid archaic or literary forms not used in contemporary Danish."
+    ],
+    "jurisdiction": "Danish (Danmark). Standard modern Danish (rigsdansk).",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
+  "fi": {
+    "formality": "Use second-person singular (sinä / 2nd-person verb form). The formal 'Te' (plural of respect) is archaic in modern Finnish product UI and must be avoided.",
+    "spelling": "Use Finnish special characters: ä, ö (å appears only in Swedish loanwords and proper names). Never substitute ä→a or ö→o.",
+    "antiPatterns": [
+      "Avoid direct English loanwords when a Finnish equivalent is established (e.g., 'tiedosto' over 'file', 'lataa' over 'download', 'käyttäjä' over 'user').",
+      "Avoid Swedish loanwords when a native Finnish equivalent is well-established.",
+      "Avoid literal word-for-word calques from English — Finnish agglutinative structure often requires full sentence restructuring."
+    ],
+    "jurisdiction": "Finnish (Suomi, Finland). Standard modern Finnish.",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
+  "sv": {
+    "formality": "Use second-person singular 'du' (standard since the 1970s du-reform). The formal 'Ni' is archaic and must not appear in product UI.",
+    "spelling": "Use Swedish special characters: å, ä, ö. Never substitute with ASCII alternatives (aa/ae/oe).",
+    "antiPatterns": [
+      "Avoid English loanwords when a natural Swedish equivalent exists (e.g., 'fil' over 'file', 'ladda ned' over 'download', 'användare' over 'user', 'inställningar' over 'settings').",
+      "Avoid Norwegian or Danish vocabulary.",
+      "Avoid genitive constructions that mirror English 's — use Swedish prepositional or compound constructions where natural."
+    ],
+    "jurisdiction": "Swedish (Sverige). Standard Swedish (rikssvenska).",
+    "structureRules": [
+      "Preserve placeholders exactly: {{var}}, {var}, ${var}, %s, %d.",
+      "Preserve ICU plural/select syntax.",
+      "Preserve HTML/XML tags and attributes.",
+      "Preserve escape sequences (\\n, \\t)."
+    ]
+  },
   "placement": {
     "button_or_menu_item": {
       "constraint": "≤3 words, action-led verb-first, no terminal punctuation, sentence case.",

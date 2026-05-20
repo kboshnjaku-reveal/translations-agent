@@ -11,6 +11,7 @@ export type LocaleIssueCode =
   | "LATIN_AMERICAN_VOCAB"
   | "MISSING_SHARP_S"
   | "MISSING_IJ"
+  | "MISSING_SPECIAL_CHARS"
   | "STRUCTURE_DIVERGED";
 
 const RULES: Record<string, { pronouns: RegExp[]; localeId: string }> = {
@@ -26,6 +27,15 @@ const RULES: Record<string, { pronouns: RegExp[]; localeId: string }> = {
     pronouns: [],
     localeId: "es",
   },
+  it: {
+    // Informal tu-forms; formal Lei-form uses Lei/La/Le/Suo/Sua
+    pronouns: [/\b(tu|ti|tuo|tua|tuoi|tue)\b/gi],
+    localeId: "it",
+  },
+  // da, fi, sv: du is the accepted standard — no informal-pronoun check
+  da: { pronouns: [], localeId: "da" },
+  fi: { pronouns: [], localeId: "fi" },
+  sv: { pronouns: [], localeId: "sv" },
 };
 
 const LATIN_AMERICAN_VOCAB = [
@@ -75,6 +85,49 @@ export function validateLocale(translation: string, locale: string): { issues: L
     }
   }
 
+  if (base === "da") {
+    // ASCII substitutions for Danish special characters — high-confidence cases only
+    const knownDanish = [
+      [/\baaben\b/gi, "åben"],
+      [/\bhaab\b/gi, "håb"],
+      [/\bnaeste\b/gi, "næste"],
+      [/\bstorre\b/gi, "større"],
+    ] as const;
+    for (const [re, expected] of knownDanish) {
+      const m = translation.match(re);
+      if (m) issues.push({ code: "MISSING_SPECIAL_CHARS", actual: m[0], expected });
+    }
+  }
+
+  if (base === "fi") {
+    // ASCII substitutions for Finnish ä/ö — high-confidence known words only
+    const knownFinnish = [
+      [/\bpaiva\b/gi, "päivä"],
+      [/\bkayttaja\b/gi, "käyttäjä"],
+      [/\bjarjestelma\b/gi, "järjestelmä"],
+      [/\bnayta\b/gi, "näytä"],
+    ] as const;
+    for (const [re, expected] of knownFinnish) {
+      const m = translation.match(re);
+      if (m) issues.push({ code: "MISSING_SPECIAL_CHARS", actual: m[0], expected });
+    }
+  }
+
+  if (base === "sv") {
+    // ASCII substitutions for Swedish å/ä/ö — high-confidence known words only
+    const knownSwedish = [
+      [/\bpaa\b/gi, "på"],
+      [/\bnar\b/gi, "när"],
+      [/\bgor\b/gi, "gör"],
+      [/\banvandare\b/gi, "användare"],
+      [/\binstaellningar\b/gi, "inställningar"],
+    ] as const;
+    for (const [re, expected] of knownSwedish) {
+      const m = translation.match(re);
+      if (m) issues.push({ code: "MISSING_SPECIAL_CHARS", actual: m[0], expected });
+    }
+  }
+
   if (base === "es") {
     // Inverted punctuation: question/exclamation sentences must start with ¿ or ¡
     const sentences = translation.split(/(?<=[.!?])\s+/);
@@ -102,5 +155,6 @@ export function validateLocale(translation: string, locale: string): { issues: L
 function formalPronoun(base: string): string {
   if (base === "de") return "Sie/Ihnen/Ihr";
   if (base === "nl") return "u/uw";
+  if (base === "it") return "Lei/La/Suo";
   return "";
 }
