@@ -29,7 +29,18 @@ export type ResolveTargetPath = (targetLocale: string) => { absPath: string; sou
 export async function commitBundleUpdates(
   resolve: ResolveTargetPath,
   updates: Update[],
-  options: { sourceByKey: Map<string, string>; sourceLocale?: string; localeWrapper?: boolean },
+  options: {
+    sourceByKey: Map<string, string>;
+    sourceLocale?: string;
+    localeWrapper?: boolean;
+    /**
+     * When true, run the full validation pipeline (placeholder structure check,
+     * existing-file parse, key merge) but skip the actual `fs.writeFile`/`fs.rename`.
+     * The returned `written[]` still lists the file basenames that WOULD have been
+     * written, so report stats are accurate. Used by `--dry-run`.
+     */
+    dryRun?: boolean;
+  },
 ): Promise<CommitResult> {
   const written: string[] = [];
   const rejected: CommitResult["rejected"] = [];
@@ -95,11 +106,16 @@ export async function commitBundleUpdates(
       }
     }
 
-    const serialized = JSON.stringify(target, null, 2) + "\n";
-    const tmpPath = `${absPath}.tmp-${process.pid}-${Date.now()}`;
-    await fs.writeFile(tmpPath, serialized, "utf8");
-    await fs.rename(tmpPath, absPath);
-    written.push(path.basename(absPath));
+    if (options.dryRun) {
+      // Skip the atomic write but still report the file as "would-write".
+      written.push(path.basename(absPath));
+    } else {
+      const serialized = JSON.stringify(target, null, 2) + "\n";
+      const tmpPath = `${absPath}.tmp-${process.pid}-${Date.now()}`;
+      await fs.writeFile(tmpPath, serialized, "utf8");
+      await fs.rename(tmpPath, absPath);
+      written.push(path.basename(absPath));
+    }
   }
 
   return { written, rejected };

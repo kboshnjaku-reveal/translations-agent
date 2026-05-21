@@ -35,10 +35,21 @@ type Cli = {
   root: string;
   model?: string;
   help: boolean;
+  dryRun: boolean;
+  yes: boolean;
+  json: boolean;
 };
 
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = { webValidate: true, noGlossary: false, root: process.cwd(), help: false };
+  const cli: Cli = {
+    webValidate: true,
+    noGlossary: false,
+    root: process.cwd(),
+    help: false,
+    dryRun: false,
+    yes: false,
+    json: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") cli.help = true;
@@ -47,6 +58,9 @@ function parseArgs(argv: string[]): Cli {
     else if (a === "--source-locale") cli.sourceLocale = argv[++i];
     else if (a === "--root") cli.root = path.resolve(argv[++i] ?? process.cwd());
     else if (a === "--model") cli.model = argv[++i];
+    else if (a === "--dry-run") cli.dryRun = true;
+    else if (a === "--yes" || a === "-y") cli.yes = true;
+    else if (a === "--json") cli.json = true;
   }
   return cli;
 }
@@ -58,6 +72,11 @@ Usage:
   translations-agent [options]
 
 Options:
+  --dry-run                   Run the full pipeline (model calls, validation, scoring) but
+                              skip the final disk writes. Report stats remain accurate.
+  --yes, -y                   Skip the interactive permission prompt (for CI / scripting).
+  --json                      Emit the final report as JSON on stdout. Progress and tool
+                              call narration are routed to stderr.
   --no-web-validate           Disable web search validation for ambiguous/legal content
   --no-glossary               Disable glossary matching (useful for testing raw model output)
   --source-locale <code>      Override source-locale auto-detection
@@ -136,6 +155,7 @@ async function runOpenAI(opts: {
   webValidate: boolean;
   taskCount: number;
   tools: import("@openai/agents").Tool[];
+  quiet: boolean;
 }) {
   const { Agent, run, tool } = await import("@openai/agents");
 
@@ -227,17 +247,21 @@ async function runOpenAI(opts: {
     maxTurns,
   });
 
+  // In JSON mode, suppress all model narration and tool-call traces so stdout
+  // stays a clean JSON document. The final report is the only stdout content.
+  const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
+
   for await (const event of streamedResult) {
     if (event.type === "run_item_stream_event") {
       const item = event.item;
       if (item.type === "tool_call_item") {
         const call = item.rawItem as { name?: string };
-        if (call.name) process.stdout.write(`  → [tool] ${call.name}\n`);
+        if (call.name) out(`  → [tool] ${call.name}\n`);
       } else if (item.type === "message_output_item") {
         const content = (item.rawItem as { content?: Array<{ type: string; text?: string }> }).content ?? [];
         for (const block of content) {
           if (block.type === "output_text" && block.text) {
-            process.stdout.write(block.text);
+            out(block.text);
           }
         }
       }
@@ -246,9 +270,9 @@ async function runOpenAI(opts: {
 
   const finalOutput = streamedResult.finalOutput;
   if (finalOutput && typeof finalOutput === "string" && finalOutput.trim()) {
-    process.stdout.write(finalOutput + "\n");
+    out(finalOutput + "\n");
   } else {
-    process.stdout.write("\n");
+    out("\n");
   }
 }
 
@@ -262,6 +286,7 @@ async function runAnthropic(opts: {
   taskCount: number;
   server: import("@anthropic-ai/claude-agent-sdk").McpSdkServerConfigWithInstance;
   toolNames: string[];
+  quiet: boolean;
 }) {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
@@ -286,20 +311,23 @@ async function runAnthropic(opts: {
     },
   });
 
+  const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
+
   for await (const message of q) {
     if (message.type === "assistant") {
       const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) {
-          process.stdout.write(block.text);
+          out(block.text);
         } else if (block.type === "tool_use" && block.name) {
-          process.stdout.write(`  → [tool] ${block.name}\n`);
+          out(`  → [tool] ${block.name}\n`);
         }
       }
     } else if (message.type === "result") {
       if (message.subtype === "success") {
-        console.log("\n");
+        if (!opts.quiet) console.log("\n");
       } else {
+        // Errors always go to stderr regardless of mode.
         console.error(`\nAgent ended with: ${message.subtype}`);
       }
       break;
@@ -339,24 +367,34 @@ async function main() {
     process.exit(0);
   }
 
+  // In --json mode, stdout is reserved for the final JSON report. Every other
+  // human-readable line (banner, pre-flight progress, tool-call narration,
+  // per-bundle commit logs) routes through `info`, which targets stderr in
+  // JSON mode and stdout otherwise.
+  const info = cli.json
+    ? (msg: string) => process.stderr.write(msg + "\n")
+    : (msg: string) => process.stdout.write(msg + "\n");
+
   const provider = await detectProvider();
   const model = cli.model ?? (provider === "openai" ? "gpt-4o" : "claude-opus-4-7");
 
-  console.log(`translations-agent  [provider: ${provider}, model: ${model}]`);
-  console.log(`Root: ${cli.root}`);
+  info(`translations-agent  [provider: ${provider}, model: ${model}${cli.dryRun ? ", DRY-RUN" : ""}]`);
+  info(`Root: ${cli.root}`);
 
   if (!(await isGitRepo(cli.root))) {
     console.error(`ERROR: ${cli.root} is not a git repository.`);
     process.exit(1);
   }
 
-  const proceed = await askPermission();
-  if (!proceed) {
-    console.log("Aborted.");
-    process.exit(1);
+  if (!cli.yes) {
+    const proceed = await askPermission();
+    if (!proceed) {
+      info("Aborted.");
+      process.exit(1);
+    }
   }
 
-  console.log("\n→ Pre-flight: scanning repository, diffing source locale, building work queue…");
+  info("\n→ Pre-flight: scanning repository, diffing source locale, building work queue…");
 
   try {
     await ensureCleanGitState(cli.root);
@@ -374,13 +412,13 @@ async function main() {
   }
 
   if (bundles.length === 0) {
-    console.log("No locale bundles detected. Exiting.");
+    info("No locale bundles detected. Exiting.");
     process.exit(0);
   }
 
-  console.log(`  Detected ${bundles.length} bundle(s):`);
+  info(`  Detected ${bundles.length} bundle(s):`);
   for (const b of bundles) {
-    console.log(
+    info(
       `    ${b.id}: source=${b.sourceLocale}, targets=[${b.targets.map((t) => t.locale).join(", ")}]`,
     );
   }
@@ -391,15 +429,15 @@ async function main() {
     changedByBundle.set(bundle.id, changes);
   }
   const totalChanges = [...changedByBundle.values()].reduce((s, list) => s + list.length, 0);
-  console.log(`  Total changed source-locale keys: ${totalChanges}`);
+  info(`  Total changed source-locale keys: ${totalChanges}`);
 
   if (totalChanges === 0) {
-    console.log("\nNo translation changes detected.\nRun the agent again after future repository changes.");
+    info("\nNo translation changes detected.\nRun the agent again after future repository changes.");
     process.exit(0);
   }
 
   const tasks = buildWorkQueue({ bundles, changedByBundle });
-  console.log(`  Work queue: ${tasks.length} task(s) (cartesian product of changes × target locales).`);
+  info(`  Work queue: ${tasks.length} task(s) (cartesian product of changes × target locales).`);
 
   const localeEntries: LocaleEntries[] = [];
   const seen = new Set<string>();
@@ -416,9 +454,9 @@ async function main() {
     const seedPath = path.resolve(__dirname, "..", "data", "glossary-seed.json");
     const seed = JSON.parse(await fs.readFile(seedPath, "utf8")) as GlossaryEntry[];
     glossary = mergeWithSeed(autoBuilt, seed);
-    console.log(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuilt.length} auto-built, after merge).`);
+    info(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuilt.length} auto-built, after merge).`);
   } else {
-    console.log("  Glossary: disabled (--no-glossary)");
+    info("  Glossary: disabled (--no-glossary)");
   }
 
   const localeRulesPath = path.resolve(__dirname, "..", "data", "locale-rules.json");
@@ -432,8 +470,10 @@ async function main() {
     glossary,
     localeRules,
     webValidationEnabled: cli.webValidate,
+    dryRun: cli.dryRun,
     onReport: (s: ReportStats) => { finalReport = s; },
-    log: (msg: string) => console.log(`  ${msg}`),
+    // Route MCP handler logs through `info` so they respect --json mode.
+    log: (msg: string) => info(`  ${msg}`),
   };
 
   // Build group preview: collapse the cartesian work queue back into the
@@ -451,9 +491,9 @@ async function main() {
   }
   const groupCount = groupMap.size;
   const queuePreview = [...groupMap.values()].slice(0, 5);
-  console.log(`  Key groups: ${groupCount} (each runs shared steps once + per-locale steps × ${tasks.length / Math.max(groupCount, 1) | 0} locales).`);
+  info(`  Key groups: ${groupCount} (each runs shared steps once + per-locale steps × ${tasks.length / Math.max(groupCount, 1) | 0} locales).`);
 
-  console.log(`\n→ Launching agent (${provider})…\n`);
+  info(`\n→ Launching agent (${provider})…\n`);
 
   if (provider === "openai") {
     const { tools, toolNames } = buildOpenAITools(commonDeps);
@@ -465,7 +505,7 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools });
+    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, quiet: cli.json });
   } else {
     const { server, toolNames } = buildAnthropicServer(commonDeps);
     const systemPrompt = await buildSystemPrompt({
@@ -476,11 +516,19 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames });
+    await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames, quiet: cli.json });
   }
 
   if (finalReport) {
-    printReport(finalReport);
+    if (cli.json) {
+      // The single piece of content that goes to stdout in JSON mode.
+      process.stdout.write(JSON.stringify(finalReport, null, 2) + "\n");
+    } else {
+      printReport(finalReport);
+      if (cli.dryRun) {
+        info("\n[dry-run] No files were written. Re-run without --dry-run to apply.");
+      }
+    }
     process.exit(0);
   }
 

@@ -16,6 +16,12 @@ export type ServerDeps = {
   glossary: GlossaryEntry[];
   localeRules: Record<string, unknown>;
   webValidationEnabled: boolean;
+  /**
+   * When true, commit_bundle runs the server-side placeholder structure check
+   * and counter updates but skips the actual disk writes. Report stats remain
+   * accurate. Set from the CLI's --dry-run flag.
+   */
+  dryRun: boolean;
   onReport: (stats: ReportStats) => void;
   log: (msg: string) => void;
 };
@@ -258,7 +264,12 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
           return { absPath: file.absPath, sourceValue: undefined };
         },
         updates as Update[],
-        { sourceByKey, sourceLocale: bundle.sourceLocale, localeWrapper: bundle.localeWrapper },
+        {
+          sourceByKey,
+          sourceLocale: bundle.sourceLocale,
+          localeWrapper: bundle.localeWrapper,
+          dryRun: deps.dryRun,
+        },
       );
 
       for (const w of result.written) state.updatedFiles.add(`${bundleId}/${w}`);
@@ -279,8 +290,9 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         }
       }
 
+      const verb = deps.dryRun ? "would write" : "written";
       deps.log(
-        `[commit_bundle] ${bundleId}: ${result.written.length} files written, ${result.rejected.length} rejected`,
+        `[commit_bundle${deps.dryRun ? " dry-run" : ""}] ${bundleId}: ${result.written.length} files ${verb}, ${result.rejected.length} rejected`,
       );
       return ok(result);
     },
