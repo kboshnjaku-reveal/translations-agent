@@ -166,6 +166,30 @@ async function runOpenAI(opts: {
 }) {
   const { Agent, run, tool } = await import("@openai/agents");
 
+  const extractOutputText = (response: any): string =>
+    (response?.output ?? [])
+      .filter((b: any) => b?.type === "message")
+      .flatMap((b: any) => b?.content ?? [])
+      .filter((c: any) => c?.type === "output_text")
+      .map((c: any) => (typeof c?.text === "string" ? c.text : ""))
+      .join("\n");
+
+  const parseStructuredJson = (text: string): { summary?: string; sources?: Array<{ url?: string; title?: string }> } | null => {
+    const trimmed = text.trim();
+    const unfenced = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const firstBrace = unfenced.indexOf("{");
+    const lastBrace = unfenced.lastIndexOf("}");
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
+    const candidate = unfenced.slice(firstBrace, lastBrace + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed !== "object" || parsed === null) return null;
+      return parsed as { summary?: string; sources?: Array<{ url?: string; title?: string }> };
+    } catch {
+      return null;
+    }
+  };
+
   const captureSourceLinks = (response: any): Array<{ url: string; title?: string }> => {
     const dedup = new Map<string, { url: string; title?: string }>();
 
@@ -183,16 +207,37 @@ async function runOpenAI(opts: {
       }
     }
 
-    const text = contentBlocks
-      .filter((c: any) => c?.type === "output_text")
-      .map((c: any) => (typeof c?.text === "string" ? c.text : ""))
-      .join("\n");
+    const text = extractOutputText(response);
     const urlMatches = text.match(/https?:\/\/[^\s)\]]+/g) ?? [];
     for (const m of urlMatches) {
       if (!dedup.has(m)) dedup.set(m, { url: m });
     }
 
+    const structured = parseStructuredJson(text);
+    const structuredSources = Array.isArray(structured?.sources) ? structured.sources : [];
+    for (const src of structuredSources) {
+      const url = typeof src?.url === "string" ? src.url.trim() : "";
+      if (!url) continue;
+      const title = typeof src?.title === "string" && src.title.trim().length > 0 ? src.title.trim() : undefined;
+      if (!dedup.has(url)) dedup.set(url, { url, title });
+    }
+
     return [...dedup.values()];
+  };
+
+  const buildWebSearchPrompt = (query: string, retry: boolean): string => {
+    const retryNote = retry
+      ? "Previous attempt returned no usable source URLs. Retry and include concrete links."
+      : "";
+    return [
+      retryNote,
+      `Search for: ${query}`,
+      "Return ONLY valid JSON with this shape:",
+      '{"summary":"<concise factual summary>","sources":[{"url":"https://...","title":"..."}]}',
+      "Include 2+ authoritative source URLs when available. Do not include markdown.",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
   };
 
   const webSearchTool = tool({
@@ -207,25 +252,36 @@ async function runOpenAI(opts: {
       try {
         const { default: OpenAI } = await import("openai");
         const openai = new OpenAI();
-        const response = await (openai.responses as any).create({
-          model: "gpt-4o",
-          tools: [{ type: "web_search_preview" }],
-          input: `Search for: ${input.query}. Provide a concise factual summary relevant to software localization or legal terminology translation.`,
-        });
-        const text = response.output
-          ?.filter((b: any) => b.type === "message")
-          .flatMap((b: any) => b.content)
-          .filter((c: any) => c.type === "output_text")
-          .map((c: any) => c.text)
-          .join("\n");
-        const sources = captureSourceLinks(response);
+        const runSearch = async (retry: boolean) =>
+          (openai.responses as any).create({
+            model: "gpt-4o",
+            tools: [{ type: "web_search_preview" }],
+            input: buildWebSearchPrompt(input.query, retry),
+          });
+
+        let response = await runSearch(false);
+        let text = extractOutputText(response);
+        let sources = captureSourceLinks(response);
+
+        // One retry maximum when no URLs were captured.
+        if (sources.length === 0) {
+          response = await runSearch(true);
+          text = extractOutputText(response);
+          sources = captureSourceLinks(response);
+        }
+
+        const structured = parseStructuredJson(text);
+        const summary =
+          typeof structured?.summary === "string" && structured.summary.trim().length > 0
+            ? structured.summary.trim()
+            : text;
 
         if (input.taskId) {
           const existing = opts.webSearchByTaskId.get(input.taskId) ?? [];
           existing.push({
             query: input.query,
             targetLocale: input.targetLocale ?? undefined,
-            summary: text ?? "",
+            summary: summary ?? "",
             sources,
           });
           opts.webSearchByTaskId.set(input.taskId, existing);
@@ -233,12 +289,12 @@ async function runOpenAI(opts: {
           opts.fallbackWebSearchEvents.push({
             query: input.query,
             targetLocale: input.targetLocale ?? undefined,
-            summary: text ?? "",
+            summary: summary ?? "",
             sources,
           });
         }
 
-        return text ?? "(no results)";
+        return summary ?? "(no results)";
       } catch {
         return "(web search unavailable — treat webScore as 0.6 for a single uncertain source)";
       }
