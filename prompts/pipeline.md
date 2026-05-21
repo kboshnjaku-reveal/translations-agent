@@ -55,7 +55,10 @@ For each `L` in `group.locales`, using that locale's candidate translation:
 
 6. **validate_translation** — `{ taskId: L.taskId, source: group.newValue, translation: <candidate>, locale: L.targetLocale, placeholders: <from normalize>, traceTokens: [<normalize>, <L's glossary>, <classify>, <L's locale_rules>] }`. If `valid === false`, read the `issues` array — each issue has a `code` and `expected`/`actual`. Fix the translation against the named issue and re-call validate. **Self-correction budget: at most 2 retries per locale.** On the 3rd failure, take the review path (step 8b) for that locale and continue.
 
-7. **WebSearch (conditional)** — only when web validation is enabled and the content is ambiguous, marketing, or legal-critical. Search authoritative sources:
+7. **WebSearch (conditional)** — only when web validation is enabled and the content is ambiguous, marketing, or legal-critical. Prefer calling with task metadata when supported by the tool:
+   - `WebSearch({ taskId: L.taskId, targetLocale: L.targetLocale, query: "..." })`
+   - If the tool accepts only `query`, call `WebSearch({ query: "..." })`.
+   Search authoritative sources:
    - Standard product UI: Microsoft, Google, Apple, Slack
    - Legal/eDiscovery: Relativity, Everlaw, law-firm style guides, bar associations
    Require ≥2 authoritative sources to agree before accepting. Convert search certainty into a `webScore` in [0, 1]: 1.0 if ≥2 sources confirm; 0.6 if 1 source; 0.0 if conflicting evidence. If web validation is disabled for this run, skip step 7 and omit `webScore` in step 8.

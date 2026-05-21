@@ -29,6 +29,7 @@ export type ServerDeps = {
    * Used by the checkpoint/resume feature to record completed groups.
    */
   onGroupCommitted?: (bundleId: string, keyPath: string) => Promise<void> | void;
+  webSearchByTaskId?: Map<string, HtmlWebSearchEvent[]>;
   log: (msg: string) => void;
 };
 
@@ -41,6 +42,76 @@ export type ReportStats = {
   flaggedForReview: number;
   updatedFiles: string[];
   reviewKeys: Array<{ bundle: string; locale: string; keyPath: string; reason?: string }>;
+  htmlReport?: {
+    generatedAt: string;
+    groups: HtmlReportGroup[];
+  };
+};
+
+export type HtmlGlossaryMatch = {
+  term: string;
+  translation: string;
+  keepEnglish: boolean;
+};
+
+export type HtmlLocaleValidation = {
+  valid: boolean;
+  score: number;
+  issues: string[];
+};
+
+export type HtmlConfidence = {
+  total: number;
+  tier: "auto" | "optional" | "escalate" | "mandatory";
+  webScore: number | null;
+  components: {
+    web: number;
+    locale: number;
+    structure: number;
+  };
+};
+
+export type HtmlLocaleResult = {
+  locale: string;
+  translation: string;
+  needsReview: boolean;
+  failureReason?: string;
+  confidence: HtmlConfidence | null;
+  glossaryMatches: HtmlGlossaryMatch[];
+  localeValidation: HtmlLocaleValidation | null;
+  alternatives: string[];
+  webValidationNote: string;
+  webValidation: HtmlWebValidation;
+};
+
+export type HtmlWebSource = {
+  url: string;
+  title?: string;
+};
+
+export type HtmlWebSearchEvent = {
+  query: string;
+  targetLocale?: string;
+  summary: string;
+  sources: HtmlWebSource[];
+};
+
+export type HtmlWebValidation = {
+  supported: boolean | null;
+  sourceCount: number;
+  webQueries: string[];
+  webSources: HtmlWebSource[];
+  summaries: string[];
+};
+
+export type HtmlReportGroup = {
+  bundleId: string;
+  keyPath: string;
+  sourceText: string;
+  sourceLocale: string;
+  status: "added" | "modified";
+  placement: Placement;
+  locales: HtmlLocaleResult[];
 };
 
 // ── Group response shape ───────────────────────────────────────────────────────
@@ -131,12 +202,83 @@ function computeSourceDiff(oldSource: string, newSource: string): string {
 // ── Handler factory ────────────────────────────────────────────────────────────
 
 export function makeHandlers(deps: ServerDeps): ToolHandlers {
+  type TaskTelemetry = {
+    glossaryMatches?: HtmlGlossaryMatch[];
+    localeValidation?: HtmlLocaleValidation;
+    confidence?: HtmlConfidence;
+  };
+
+  type GroupAccumulator = Omit<HtmlReportGroup, "locales"> & {
+    locales: Map<string, HtmlLocaleResult>;
+  };
+
   const trace = new TraceRegistry();
+  const telemetry = new Map<string, TaskTelemetry>();
+  const taskIndex = new Map<string, Task>();
+  for (const task of deps.tasks) {
+    taskIndex.set(`${task.bundleId}::${task.keyPath}::${task.targetLocale}`, task);
+  }
+
+  const tierToAction = (tier: HtmlConfidence["tier"]): string => {
+    if (tier === "auto") return "auto-accept";
+    if (tier === "optional") return "optional-review";
+    if (tier === "escalate") return "escalate";
+    return "mandatory-review";
+  };
+
+  const upsertTelemetry = (taskId: string, patch: Partial<TaskTelemetry>) => {
+    const prev = telemetry.get(taskId) ?? {};
+    telemetry.set(taskId, { ...prev, ...patch });
+  };
+
+  const buildWebValidation = (taskId: string): HtmlWebValidation => {
+    const events = deps.webSearchByTaskId?.get(taskId) ?? [];
+    const webQueries = [...new Set(events.map((e) => e.query))];
+
+    const sourceMap = new Map<string, HtmlWebSource>();
+    for (const event of events) {
+      for (const source of event.sources) {
+        if (!sourceMap.has(source.url)) {
+          sourceMap.set(source.url, source);
+        }
+      }
+    }
+    const webSources = [...sourceMap.values()];
+    const summaries = events.map((e) => e.summary).filter((s) => s.length > 0);
+
+    return {
+      supported: webSources.length > 0 ? true : null,
+      sourceCount: webSources.length,
+      webQueries,
+      webSources,
+      summaries,
+    };
+  };
+
+  const ensureGroup = (task: Task): GroupAccumulator => {
+    const key = `${task.bundleId}::${task.keyPath}`;
+    const existing = state.htmlGroups.get(key);
+    if (existing) return existing;
+
+    const created: GroupAccumulator = {
+      bundleId: task.bundleId,
+      keyPath: task.keyPath,
+      sourceText: task.newValue,
+      sourceLocale: task.sourceLocale,
+      status: task.status,
+      placement: task.placement,
+      locales: new Map<string, HtmlLocaleResult>(),
+    };
+    state.htmlGroups.set(key, created);
+    return created;
+  };
+
   const state = {
     translatedAuto: 0,
     flaggedForReview: 0,
     updatedFiles: new Set<string>(),
     reviewKeys: [] as ReportStats["reviewKeys"],
+    htmlGroups: new Map<string, GroupAccumulator>(),
     reportEmitted: false,
   };
   const remaining = [...deps.tasks];
@@ -203,6 +345,13 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
       const matches = findMatches(deps.glossary, text, targetLocale);
+      upsertTelemetry(taskId, {
+        glossaryMatches: matches.map((m) => ({
+          term: m.term,
+          translation: m.translation,
+          keepEnglish: m.keepEnglish,
+        })),
+      });
       const newToken = trace.issue(taskId, "glossary");
       return ok({ matches, traceToken: newToken, priorToken: traceToken });
     },
@@ -271,6 +420,14 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       const localeScore = localeResult.score;
       const valid = issues.length === 0;
 
+      upsertTelemetry(taskId, {
+        localeValidation: {
+          valid,
+          score: localeScore,
+          issues: issues.map((issue) => issue.code),
+        },
+      });
+
       const newToken = trace.issue(taskId, "validate");
       return ok({ valid, issues, structureScore, localeScore, traceToken: newToken });
     },
@@ -279,6 +436,14 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
       const result = scoreConfidence({ webScore: webScore ?? undefined, localeScore, structureScore });
+      upsertTelemetry(taskId, {
+        confidence: {
+          total: result.total,
+          tier: result.tier,
+          webScore: webScore ?? null,
+          components: result.components,
+        },
+      });
       trace.issue(taskId, "score");
       return ok(result);
     },
@@ -317,6 +482,27 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
 
       for (const w of result.written) state.updatedFiles.add(`${bundleId}/${w}`);
       for (const u of updates) {
+        const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
+        if (task) {
+          const group = ensureGroup(task);
+          const taskTelemetry = telemetry.get(task.taskId);
+          group.locales.set(u.targetLocale, {
+            locale: u.targetLocale,
+            translation: u.value,
+            needsReview: u.needsReview,
+            failureReason: u.failureReason ?? undefined,
+            confidence: taskTelemetry?.confidence ?? null,
+            glossaryMatches: taskTelemetry?.glossaryMatches ?? [],
+            localeValidation: taskTelemetry?.localeValidation ?? null,
+            alternatives: [],
+            webValidationNote:
+              taskTelemetry?.confidence?.webScore === null
+                ? "Web validation score unavailable for this locale in this run."
+                : "Web confidence reflects the webScore provided to score_confidence.",
+            webValidation: buildWebValidation(task.taskId),
+          });
+        }
+
         if (u.needsReview) {
           state.flaggedForReview += 1;
           state.reviewKeys.push({
@@ -355,6 +541,33 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       const targetLocales = new Set<string>();
       for (const b of deps.bundles) for (const t of b.targets) targetLocales.add(t.locale);
 
+      const groups = [...state.htmlGroups.values()]
+        .map((group) => ({
+          bundleId: group.bundleId,
+          keyPath: group.keyPath,
+          sourceText: group.sourceText,
+          sourceLocale: group.sourceLocale,
+          status: group.status,
+          placement: group.placement,
+          locales: [...group.locales.values()]
+            .sort((a, b) => a.locale.localeCompare(b.locale))
+            .map((localeResult) => ({
+              ...localeResult,
+              // Keep an explicit action string for simple badge rendering.
+              confidence: localeResult.confidence
+                ? {
+                    ...localeResult.confidence,
+                    tier: localeResult.confidence.tier,
+                  }
+                : null,
+            })),
+        }))
+        .sort((a, b) => {
+          const bundleCmp = a.bundleId.localeCompare(b.bundleId);
+          if (bundleCmp !== 0) return bundleCmp;
+          return a.keyPath.localeCompare(b.keyPath);
+        });
+
       const finalStats: ReportStats = {
         detectedBundles: deps.bundles.length,
         sourceLocale: deps.bundles[0]?.sourceLocale ?? "en",
@@ -364,6 +577,19 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         flaggedForReview: state.flaggedForReview,
         updatedFiles: [...state.updatedFiles].sort(),
         reviewKeys: state.reviewKeys,
+        htmlReport: {
+          generatedAt: new Date().toISOString(),
+          groups: groups.map((group) => ({
+            ...group,
+            locales: group.locales.map((localeResult) => ({
+              ...localeResult,
+              webValidationNote:
+                localeResult.confidence && localeResult.confidence.webScore !== null
+                  ? `${localeResult.webValidationNote} action=${tierToAction(localeResult.confidence.tier)}.`
+                  : localeResult.webValidationNote,
+            })),
+          })),
+        },
       };
 
       deps.onReport(finalStats);

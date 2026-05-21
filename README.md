@@ -49,6 +49,7 @@ The agent prompts for confirmation before writing anything. Pass `--yes` to skip
 | `--source-locale <code>` | Override auto-detection of the source language (e.g. `--source-locale en-US`). |
 | `--root <path>` | Operate on a directory other than the current working directory. |
 | `--model <name>` | Use a specific model. Defaults to `gpt-4o` (OpenAI) or `claude-opus-4-7` (Anthropic). |
+| `--no-html-report` | Disable HTML report generation. By default, each run writes `reports/translation-report-YYYYMMDD-HHMMSS.html`. |
 | `--help`, `-h` | Print the help message. |
 
 ### Examples
@@ -106,6 +107,18 @@ After a run, the CLI prints a report showing:
 - Review queue — keys written with `__needsReview: true` and the reason.
 
 A confidence score below 0.85 produces an `__needsReview: true` sibling key. The translation is still written (best-effort), but you should treat it as a draft. Search your locales for `__needsReview` after a run, fix or accept each one, and delete the flag.
+
+By default, each successful run also writes an interactive HTML report to:
+
+`reports/translation-report-YYYYMMDD-HHMMSS.html`
+
+Use `--no-html-report` to skip this artifact.
+
+The HTML report includes per-locale web validation context when captured during the run:
+
+- Web search queries
+- Source/reference links found during web search
+- Evidence summaries returned by the search step
 
 In `--json` mode, the same data lands on stdout as a single JSON object — useful for PR bots and CI gates:
 

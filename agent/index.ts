@@ -13,7 +13,8 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { buildGlossary, mergeWithSeed, type GlossaryEntry, type LocaleEntries } from "../lib/glossary.js";
 import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
-import type { ReportStats } from "./tools-core.js";
+import { writeHtmlReport } from "./html-report.js";
+import type { HtmlWebSearchEvent, ReportStats } from "./tools-core.js";
 
 // Resolved once at module load so both dev (tsx agent/index.ts) and prod
 // (dist/agent/index.js) walk up to the correct asset root: repo-root in dev,
@@ -35,6 +36,7 @@ type Cli = {
   yes: boolean;
   json: boolean;
   noResume: boolean;
+  htmlReport: boolean;
 };
 
 function parseArgs(argv: string[]): Cli {
@@ -47,6 +49,7 @@ function parseArgs(argv: string[]): Cli {
     yes: false,
     json: false,
     noResume: false,
+    htmlReport: true,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -60,6 +63,7 @@ function parseArgs(argv: string[]): Cli {
     else if (a === "--yes" || a === "-y") cli.yes = true;
     else if (a === "--json") cli.json = true;
     else if (a === "--no-resume") cli.noResume = true;
+    else if (a === "--no-html-report") cli.htmlReport = false;
   }
   return cli;
 }
@@ -81,6 +85,7 @@ Options:
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
   --model <name>              Override the model (default: gpt-4o for OpenAI, claude-opus-4-7 for Anthropic)
+  --no-html-report            Skip writing the HTML run report (enabled by default)
   --no-resume                 Skip loading a saved checkpoint and start from the beginning.
                               Progress is still saved for future resume unless --dry-run is set.
   --help, -h                  Show this help message
@@ -155,15 +160,49 @@ async function runOpenAI(opts: {
   webValidate: boolean;
   taskCount: number;
   tools: import("@openai/agents").Tool[];
+  webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
   quiet: boolean;
 }) {
   const { Agent, run, tool } = await import("@openai/agents");
 
+  const captureSourceLinks = (response: any): Array<{ url: string; title?: string }> => {
+    const dedup = new Map<string, { url: string; title?: string }>();
+
+    const contentBlocks = (response?.output ?? [])
+      .filter((b: any) => b?.type === "message")
+      .flatMap((b: any) => b?.content ?? []);
+
+    for (const block of contentBlocks) {
+      const annotations = Array.isArray(block?.annotations) ? block.annotations : [];
+      for (const ann of annotations) {
+        const url = typeof ann?.url === "string" ? ann.url : undefined;
+        if (!url) continue;
+        const title = typeof ann?.title === "string" ? ann.title : undefined;
+        if (!dedup.has(url)) dedup.set(url, { url, title });
+      }
+    }
+
+    const text = contentBlocks
+      .filter((c: any) => c?.type === "output_text")
+      .map((c: any) => (typeof c?.text === "string" ? c.text : ""))
+      .join("\n");
+    const urlMatches = text.match(/https?:\/\/[^\s)\]]+/g) ?? [];
+    for (const m of urlMatches) {
+      if (!dedup.has(m)) dedup.set(m, { url: m });
+    }
+
+    return [...dedup.values()];
+  };
+
   const webSearchTool = tool({
     name: "WebSearch",
-    description: "Search the web for authoritative sources on a translation term or legal phrase.",
-    parameters: z.object({ query: z.string() }),
-    execute: async (input: { query: string }) => {
+    description: "Search the web for authoritative sources on a translation term or legal phrase. Always pass the locale taskId and targetLocale to support run reporting.",
+    parameters: z.object({
+      query: z.string(),
+      taskId: z.string().nullable().optional(),
+      targetLocale: z.string().nullable().optional(),
+    }),
+    execute: async (input: { query: string; taskId?: string | null; targetLocale?: string | null }) => {
       try {
         const { default: OpenAI } = await import("openai");
         const openai = new OpenAI();
@@ -178,6 +217,19 @@ async function runOpenAI(opts: {
           .filter((c: any) => c.type === "output_text")
           .map((c: any) => c.text)
           .join("\n");
+        const sources = captureSourceLinks(response);
+
+        if (input.taskId) {
+          const existing = opts.webSearchByTaskId.get(input.taskId) ?? [];
+          existing.push({
+            query: input.query,
+            targetLocale: input.targetLocale ?? undefined,
+            summary: text ?? "",
+            sources,
+          });
+          opts.webSearchByTaskId.set(input.taskId, existing);
+        }
+
         return text ?? "(no results)";
       } catch {
         return "(web search unavailable — treat webScore as 0.6 for a single uncertain source)";
@@ -464,6 +516,7 @@ async function main() {
   const localeRules = JSON.parse(localeRulesRaw) as Record<string, unknown>;
 
   let finalReport: ReportStats | null = null;
+  const webSearchByTaskId = new Map<string, HtmlWebSearchEvent[]>();
   const commonDeps = {
     tasks,
     bundles,
@@ -472,6 +525,7 @@ async function main() {
     webValidationEnabled: cli.webValidate,
     dryRun: cli.dryRun,
     onReport: (s: ReportStats) => { finalReport = s; },
+    webSearchByTaskId,
     // Route MCP handler logs through `info` so they respect --json mode.
     log: (msg: string) => info(`  ${msg}`),
     onGroupCommitted: checkpoint
@@ -511,7 +565,7 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, quiet: cli.json });
+    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, webSearchByTaskId, quiet: cli.json });
   } else {
     const { server, toolNames } = buildAnthropicServer(commonDeps);
     const systemPrompt = await buildSystemPrompt({
@@ -541,6 +595,16 @@ async function main() {
         info("\n[dry-run] No files were written. Re-run without --dry-run to apply.");
       }
     }
+
+    if (cli.htmlReport) {
+      try {
+        const htmlReportPath = await writeHtmlReport(cli.root, finalReport);
+        info(`HTML report: ${htmlReportPath}`);
+      } catch (e) {
+        console.error(`Failed to write HTML report: ${(e as Error).message}`);
+      }
+    }
+
     process.exit(0);
   }
 
