@@ -24,6 +24,11 @@ export type ServerDeps = {
    */
   dryRun: boolean;
   onReport: (stats: ReportStats) => void;
+  /**
+   * Optional callback invoked after a key group is successfully committed.
+   * Used by the checkpoint/resume feature to record completed groups.
+   */
+  onGroupCommitted?: (bundleId: string, keyPath: string) => Promise<void> | void;
   log: (msg: string) => void;
 };
 
@@ -332,6 +337,14 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       deps.log(
         `[commit_bundle${deps.dryRun ? " dry-run" : ""}] ${bundleId}: ${result.written.length} files ${verb}, ${result.rejected.length} rejected`,
       );
+
+      if (deps.onGroupCommitted) {
+        const uniqueKeyPaths = new Set(updates.map((u) => u.keyPath));
+        for (const keyPath of uniqueKeyPaths) {
+          await deps.onGroupCommitted(bundleId, keyPath);
+        }
+      }
+
       return ok(result);
     },
 

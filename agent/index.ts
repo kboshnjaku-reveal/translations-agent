@@ -6,7 +6,8 @@ import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { scanRepository } from "./repository.js";
-import { ensureCleanGitState, detectChangedKeys, isGitRepo } from "./git.js";
+import { ensureCleanGitState, detectChangedKeys, isGitRepo, getHeadSha } from "./git.js";
+import { loadCheckpoint, saveCheckpoint, deleteCheckpoint, isCheckpointValid, digestContents, type Checkpoint } from "../lib/checkpoint.js";
 import { buildWorkQueue } from "./work-queue.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildGlossary, mergeWithSeed, type GlossaryEntry, type LocaleEntries } from "../lib/glossary.js";
@@ -33,6 +34,7 @@ type Cli = {
   dryRun: boolean;
   yes: boolean;
   json: boolean;
+  noResume: boolean;
 };
 
 function parseArgs(argv: string[]): Cli {
@@ -44,6 +46,7 @@ function parseArgs(argv: string[]): Cli {
     dryRun: false,
     yes: false,
     json: false,
+    noResume: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -56,6 +59,7 @@ function parseArgs(argv: string[]): Cli {
     else if (a === "--dry-run") cli.dryRun = true;
     else if (a === "--yes" || a === "-y") cli.yes = true;
     else if (a === "--json") cli.json = true;
+    else if (a === "--no-resume") cli.noResume = true;
   }
   return cli;
 }
@@ -77,6 +81,8 @@ Options:
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
   --model <name>              Override the model (default: gpt-4o for OpenAI, claude-opus-4-7 for Anthropic)
+  --no-resume                 Skip loading a saved checkpoint and start from the beginning.
+                              Progress is still saved for future resume unless --dry-run is set.
   --help, -h                  Show this help message
 
 Provider selection (set one key in your .env or environment):
@@ -383,7 +389,54 @@ async function main() {
     process.exit(0);
   }
 
-  const tasks = buildWorkQueue({ bundles, changedByBundle });
+  const allTasks = buildWorkQueue({ bundles, changedByBundle });
+
+  // ── Checkpoint / resume ──────────────────────────────────────────────────
+  const headSha = await getHeadSha(cli.root);
+  const sourceDigests: Record<string, string> = {};
+  for (const bundle of bundles) {
+    const contents = await fs.readFile(bundle.sourceFile.absPath, "utf8");
+    sourceDigests[bundle.id] = digestContents(contents);
+  }
+
+  let checkpoint: Checkpoint | null = null;
+  let tasks = allTasks;
+
+  if (!cli.noResume && !cli.dryRun && headSha) {
+    const saved = await loadCheckpoint(cli.root);
+    if (saved && isCheckpointValid(saved, headSha, sourceDigests)) {
+      const completedSet = new Set(
+        saved.completed.map((c) => `${c.bundleId}::${c.keyPath}`),
+      );
+      const resumedTasks = allTasks.filter(
+        (t) => !completedSet.has(`${t.bundleId}::${t.keyPath}`),
+      );
+      const skipped = allTasks.length - resumedTasks.length;
+      if (skipped > 0) {
+        info(`  Resuming from checkpoint — ${skipped} task(s) already completed, ${resumedTasks.length} remaining.`);
+        tasks = resumedTasks;
+        checkpoint = saved;
+      } else {
+        info(`  Checkpoint found but no groups to skip — starting fresh.`);
+        checkpoint = saved;
+      }
+    } else if (saved) {
+      info(`  Checkpoint found but is stale (HEAD or source changed) — starting fresh.`);
+      await deleteCheckpoint(cli.root);
+    }
+  }
+
+  if (!checkpoint && !cli.dryRun && headSha) {
+    checkpoint = {
+      schema: 1,
+      timestamp: new Date().toISOString(),
+      headSha,
+      sourceDigests,
+      completed: [],
+    };
+    await saveCheckpoint(cli.root, checkpoint);
+  }
+
   info(`  Work queue: ${tasks.length} task(s) (cartesian product of changes × target locales).`);
 
   const localeEntries: LocaleEntries[] = [];
@@ -421,6 +474,12 @@ async function main() {
     onReport: (s: ReportStats) => { finalReport = s; },
     // Route MCP handler logs through `info` so they respect --json mode.
     log: (msg: string) => info(`  ${msg}`),
+    onGroupCommitted: checkpoint
+      ? async (bundleId: string, keyPath: string) => {
+          checkpoint!.completed.push({ bundleId, keyPath });
+          await saveCheckpoint(cli.root, checkpoint!);
+        }
+      : undefined,
   };
 
   // Build group preview: collapse the cartesian work queue back into the
@@ -467,6 +526,12 @@ async function main() {
   }
 
   if (finalReport) {
+    // Delete the checkpoint on successful completion so a subsequent run
+    // starts fresh rather than finding an empty (fully-completed) checkpoint.
+    if (!cli.dryRun) {
+      await deleteCheckpoint(cli.root);
+    }
+
     if (cli.json) {
       // The single piece of content that goes to stdout in JSON mode.
       process.stdout.write(JSON.stringify(finalReport, null, 2) + "\n");

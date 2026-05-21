@@ -92,6 +92,16 @@ function parseLocale(text: string, label: string): JsonObject {
   return parsed as JsonObject;
 }
 
+export async function getHeadSha(root: string): Promise<string | null> {
+  try {
+    const git = makeGit(root);
+    const sha = await git.revparse(["HEAD"]);
+    return sha.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function isGitRepo(root: string): Promise<boolean> {
   try {
     const git = makeGit(root);
