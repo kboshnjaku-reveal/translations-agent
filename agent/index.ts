@@ -3,11 +3,8 @@ import "dotenv/config";
 import readline from "node:readline";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import fg from "fast-glob";
 import { scanRepository } from "./repository.js";
 import { ensureCleanGitState, detectChangedKeys, isGitRepo } from "./git.js";
 import { buildWorkQueue } from "./work-queue.js";
@@ -16,8 +13,6 @@ import { buildGlossary, mergeWithSeed, type GlossaryEntry, type LocaleEntries } 
 import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
 import type { ReportStats } from "./tools-core.js";
-
-const execAsync = promisify(exec);
 
 // Resolved once at module load so both dev (tsx agent/index.ts) and prod
 // (dist/agent/index.js) walk up to the correct asset root: repo-root in dev,
@@ -138,7 +133,6 @@ async function askPermission(): Promise<boolean> {
   console.log(`\nThe agent requires:`);
   console.log(`  ✓ Read access to repository`);
   console.log(`  ✓ Write access to localization files`);
-  console.log(`  ✓ Permission to execute bash/git commands`);
   const answer = await new Promise<string>((resolve) =>
     rl.question(`\nContinue? (y/N) `, resolve),
   );
@@ -158,47 +152,6 @@ async function runOpenAI(opts: {
   quiet: boolean;
 }) {
   const { Agent, run, tool } = await import("@openai/agents");
-
-  const readFileTool = tool({
-    name: "Read",
-    description: "Read a file from the filesystem and return its contents.",
-    parameters: z.object({ file_path: z.string() }),
-    execute: async (input: { file_path: string }) => {
-      try {
-        return await fs.readFile(input.file_path, "utf8");
-      } catch (e) {
-        return `Error reading file: ${(e as Error).message}`;
-      }
-    },
-  });
-
-  const globTool = tool({
-    name: "Glob",
-    description: "Find files matching a glob pattern. Searches relative to the repository root.",
-    parameters: z.object({ pattern: z.string(), cwd: z.string().nullable().optional() }),
-    execute: async (input: { pattern: string; cwd?: string | null }) => {
-      try {
-        const matches = await fg(input.pattern, { cwd: input.cwd ?? opts.root, absolute: true, dot: false });
-        return matches.join("\n") || "(no matches)";
-      } catch (e) {
-        return `Error: ${(e as Error).message}`;
-      }
-    },
-  });
-
-  const bashTool = tool({
-    name: "Bash",
-    description: "Execute a bash command in the repository root. Returns stdout; stderr is appended if non-empty.",
-    parameters: z.object({ command: z.string() }),
-    execute: async (input: { command: string }) => {
-      try {
-        const { stdout, stderr } = await execAsync(input.command, { cwd: opts.root, timeout: 30_000 });
-        return stdout + (stderr ? `\nSTDERR: ${stderr}` : "");
-      } catch (e) {
-        return `Error: ${(e as Error).message}`;
-      }
-    },
-  });
 
   const webSearchTool = tool({
     name: "WebSearch",
@@ -228,9 +181,6 @@ async function runOpenAI(opts: {
 
   const allTools = [
     ...opts.tools,
-    readFileTool,
-    globTool,
-    bashTool,
     ...(opts.webValidate ? [webSearchTool] : []),
   ];
 
@@ -290,8 +240,7 @@ async function runAnthropic(opts: {
 }) {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
-  const builtInTools: string[] = ["Read", "Glob", "Bash"];
-  if (opts.webValidate) builtInTools.push("WebSearch");
+  const builtInTools: string[] = opts.webValidate ? ["WebSearch"] : [];
 
   const allowedTools = [...opts.toolNames, ...builtInTools];
   const maxTurns = Math.max(80, opts.taskCount * 12);
@@ -305,8 +254,6 @@ async function runAnthropic(opts: {
       mcpServers: { localizer: opts.server },
       allowedTools,
       tools: builtInTools,
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
       maxTurns,
     },
   });
