@@ -119,6 +119,8 @@ The HTML report includes per-locale web validation context when captured during 
 - Web search queries
 - Source/reference links found during web search
 - Evidence summaries returned by the search step
+- Evidence transparency metadata (`evidenceStatus`, `evidenceOrigin`, score source)
+- Raw WebSearch transcript entries (query + response summary + source count)
 
 In `--json` mode, the same data lands on stdout as a single JSON object — useful for PR bots and CI gates:
 

@@ -30,6 +30,7 @@ export type ServerDeps = {
    */
   onGroupCommitted?: (bundleId: string, keyPath: string) => Promise<void> | void;
   webSearchByTaskId?: Map<string, HtmlWebSearchEvent[]>;
+  fallbackWebSearchEvents?: HtmlWebSearchEvent[];
   log: (msg: string) => void;
 };
 
@@ -102,6 +103,16 @@ export type HtmlWebValidation = {
   webQueries: string[];
   webSources: HtmlWebSource[];
   summaries: string[];
+  evidenceStatus: "evidence-captured" | "score-only" | "not-run";
+  evidenceOrigin: "task-matched" | "fallback-run" | "none";
+  scoreSource: "score_confidence_input";
+  warning?: string;
+  transcript: Array<{
+    query: string;
+    summary: string;
+    sourceCount: number;
+    targetLocale?: string;
+  }>;
 };
 
 export type HtmlReportGroup = {
@@ -232,7 +243,8 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
   };
 
   const buildWebValidation = (taskId: string): HtmlWebValidation => {
-    const events = deps.webSearchByTaskId?.get(taskId) ?? [];
+    const directEvents = deps.webSearchByTaskId?.get(taskId) ?? [];
+    const events = directEvents.length > 0 ? directEvents : (deps.fallbackWebSearchEvents ?? []);
     const webQueries = [...new Set(events.map((e) => e.query))];
 
     const sourceMap = new Map<string, HtmlWebSource>();
@@ -245,13 +257,40 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     }
     const webSources = [...sourceMap.values()];
     const summaries = events.map((e) => e.summary).filter((s) => s.length > 0);
+    const taskConfidence = telemetry.get(taskId)?.confidence;
+    const hasWebScore = taskConfidence?.webScore !== null && taskConfidence?.webScore !== undefined;
+    const hasEvidence = events.length > 0 || webSources.length > 0;
+
+    let evidenceStatus: "evidence-captured" | "score-only" | "not-run";
+    if (hasEvidence) evidenceStatus = "evidence-captured";
+    else if (hasWebScore) evidenceStatus = "score-only";
+    else evidenceStatus = "not-run";
+
+    const evidenceOrigin: "task-matched" | "fallback-run" | "none" =
+      directEvents.length > 0 ? "task-matched" : events.length > 0 ? "fallback-run" : "none";
+
+    const warning = evidenceStatus === "score-only"
+      ? "Web confidence exists but no query/source telemetry was captured for this locale."
+      : undefined;
+
+    const transcript = events.map((e) => ({
+      query: e.query,
+      summary: e.summary,
+      sourceCount: e.sources.length,
+      targetLocale: e.targetLocale,
+    }));
 
     return {
-      supported: webSources.length > 0 ? true : null,
+      supported: events.length > 0 ? webSources.length > 0 : null,
       sourceCount: webSources.length,
       webQueries,
       webSources,
       summaries,
+      evidenceStatus,
+      evidenceOrigin,
+      scoreSource: "score_confidence_input",
+      warning,
+      transcript,
     };
   };
 
@@ -498,7 +537,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
             webValidationNote:
               taskTelemetry?.confidence?.webScore === null
                 ? "Web validation score unavailable for this locale in this run."
-                : "Web confidence reflects the webScore provided to score_confidence.",
+                : "Web confidence reflects the webScore provided to score_confidence; evidence may come from task-matched or fallback WebSearch captures.",
             webValidation: buildWebValidation(task.taskId),
           });
         }

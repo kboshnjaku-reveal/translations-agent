@@ -161,6 +161,7 @@ async function runOpenAI(opts: {
   taskCount: number;
   tools: import("@openai/agents").Tool[];
   webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
+  fallbackWebSearchEvents: HtmlWebSearchEvent[];
   quiet: boolean;
 }) {
   const { Agent, run, tool } = await import("@openai/agents");
@@ -228,6 +229,13 @@ async function runOpenAI(opts: {
             sources,
           });
           opts.webSearchByTaskId.set(input.taskId, existing);
+        } else {
+          opts.fallbackWebSearchEvents.push({
+            query: input.query,
+            targetLocale: input.targetLocale ?? undefined,
+            summary: text ?? "",
+            sources,
+          });
         }
 
         return text ?? "(no results)";
@@ -517,6 +525,7 @@ async function main() {
 
   let finalReport: ReportStats | null = null;
   const webSearchByTaskId = new Map<string, HtmlWebSearchEvent[]>();
+  const fallbackWebSearchEvents: HtmlWebSearchEvent[] = [];
   const commonDeps = {
     tasks,
     bundles,
@@ -526,6 +535,7 @@ async function main() {
     dryRun: cli.dryRun,
     onReport: (s: ReportStats) => { finalReport = s; },
     webSearchByTaskId,
+    fallbackWebSearchEvents,
     // Route MCP handler logs through `info` so they respect --json mode.
     log: (msg: string) => info(`  ${msg}`),
     onGroupCommitted: checkpoint
@@ -565,7 +575,7 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, webSearchByTaskId, quiet: cli.json });
+    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
   } else {
     const { server, toolNames } = buildAnthropicServer(commonDeps);
     const systemPrompt = await buildSystemPrompt({
