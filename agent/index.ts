@@ -5,6 +5,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import fg from "fast-glob";
 import { scanRepository } from "./repository.js";
@@ -17,6 +18,11 @@ import { buildAnthropicServer } from "./tools-anthropic.js";
 import type { ReportStats } from "./tools-core.js";
 
 const execAsync = promisify(exec);
+
+// Resolved once at module load so both dev (tsx agent/index.ts) and prod
+// (dist/agent/index.js) walk up to the correct asset root: repo-root in dev,
+// dist/ in prod (where copy-assets.mjs mirrors data/ and prompts/).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
 
@@ -407,7 +413,7 @@ async function main() {
   let glossary: GlossaryEntry[] = [];
   if (!cli.noGlossary) {
     const autoBuilt = buildGlossary(localeEntries, bundles[0]!.sourceLocale);
-    const seedPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "data", "glossary-seed.json");
+    const seedPath = path.resolve(__dirname, "..", "data", "glossary-seed.json");
     const seed = JSON.parse(await fs.readFile(seedPath, "utf8")) as GlossaryEntry[];
     glossary = mergeWithSeed(autoBuilt, seed);
     console.log(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuilt.length} auto-built, after merge).`);
@@ -415,12 +421,7 @@ async function main() {
     console.log("  Glossary: disabled (--no-glossary)");
   }
 
-  const localeRulesPath = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
-    "..",
-    "data",
-    "locale-rules.json",
-  );
+  const localeRulesPath = path.resolve(__dirname, "..", "data", "locale-rules.json");
   const localeRulesRaw = await fs.readFile(localeRulesPath, "utf8");
   const localeRules = JSON.parse(localeRulesRaw) as Record<string, unknown>;
 
