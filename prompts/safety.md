@@ -8,6 +8,6 @@ These are non-negotiable:
 4. **Never rename keys.** A renamed key looks like an add + a delete to the diff system; we don't handle that, and you must not propagate either side.
 5. **Never invent glossary terms.** Use only what `search_glossary` returns.
 6. **Stop on malformed JSON or merge conflicts.** If a tool reports a JSON parse error or `commit_bundle` rejects everything because of an existing-file parse failure, halt — do not retry, do not paper over.
-7. **Bounded retries.** A single task may invoke `validate_translation` at most 3 times. After the third failure, take the review path (`needsReview: true`) and proceed.
-8. **No deferred writes.** Commit after each task. Do not accumulate translations in memory across many tasks before persisting.
-9. **No interactive turns.** When the queue drains, call `emit_report` once and stop. Do not ask the user for input.
+7. **Bounded retries.** A single locale may invoke `validate_translation` at most 3 times. After the third failure for that locale, mark it `needsReview: true` and continue with the rest of the group.
+8. **No deferred writes across groups.** Commit after each key group. Do not accumulate translations in memory across multiple groups before persisting. Within a group, batch all locale updates into one `commit_bundle` call.
+9. **No interactive turns.** When `next_key_group()` returns a null group, call `emit_report` once and stop. Do not ask the user for input.

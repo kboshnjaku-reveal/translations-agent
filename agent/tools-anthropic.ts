@@ -32,15 +32,15 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
   const allTools = [
     tool(
-      "next_task",
-      "Dequeue the next translation task from the work queue. Returns null when the queue is drained. Always call this before starting a new task.",
+      "next_key_group",
+      "Dequeue the next key group from the work queue. A group contains one source key and every target locale that needs it translated. Returns {group, remaining} where group is null when the queue is drained. Process all locales in the group together: shared steps (normalize_text, classify_domain) run once per group; per-locale steps (search_glossary, get_locale_rules, validate_translation, score_confidence) run once per locale; commit_bundle runs once per group with batched updates.",
       {},
-      async () => wrapResult(await h.nextTask()),
+      async () => wrapResult(await h.nextKeyGroup()),
     ),
 
     tool(
       "normalize_text",
-      "Normalize the source text: collapse whitespace and mask placeholders ({{x}}, {x}, ${x}, %s, %d) as __PH0__..__PHn__. MUST be called as step 1 of the pipeline.",
+      "GROUP-SHARED. Call ONCE per key group with any member's taskId. Collapses whitespace and masks placeholders ({{x}}, {x}, ${x}, %s, %d) as __PH0__..__PHn__. The returned traceToken is valid for every locale in the group.",
       { taskId: z.string(), text: z.string() },
       async ({ taskId, text }: { taskId: string; text: string }) =>
         wrapResult(await h.normalizeText({ taskId, text })),
@@ -48,7 +48,7 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
     tool(
       "search_glossary",
-      "Look up curated glossary terms in the source text for the given target locale. MUST be called as step 2. Returns matches with translations and keepEnglish flag.",
+      "PER-LOCALE. Call once for each locale in the group. Looks up curated glossary terms for the given target locale. Returns matches with translations and keepEnglish flag.",
       {
         taskId: z.string(),
         text: z.string(),
@@ -73,7 +73,7 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
     tool(
       "classify_domain",
-      "Classify the source text into a domain (eDiscovery, Legal, Tech, or general) by keyword matching. MUST be called as step 3.",
+      "GROUP-SHARED. Call ONCE per key group with any member's taskId. Classifies the source text into a domain (eDiscovery, Legal, Tech, or general). The returned traceToken is valid for every locale in the group.",
       { taskId: z.string(), text: z.string(), traceToken: z.string() },
       async ({ taskId, text, traceToken }: { taskId: string; text: string; traceToken: string }) =>
         wrapResult(await h.classifyDomain({ taskId, text, traceToken })),
@@ -81,7 +81,7 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
     tool(
       "get_locale_rules",
-      "Fetch formality, spelling, anti-patterns, structure rules, and placement constraints for the target locale. MUST be called as step 4.",
+      "PER-LOCALE. Call once for each locale in the group. Fetches formality, spelling, anti-patterns, structure rules, and placement constraints for the target locale.",
       {
         taskId: z.string(),
         locale: z.string(),
@@ -164,7 +164,7 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
     tool(
       "commit_bundle",
-      "Persist translation updates for a single bundle. The host re-runs placeholder structure checks server-side and rejects any structurally-broken updates. Updates with needsReview=true bypass the structure check and write a sibling `<keyPath>__needsReview: true` key. Use this — never use raw Write on locale JSON.",
+      "Persist translation updates for a single bundle. Call ONCE per key group with one entry in `updates` for every locale you translated. The host re-runs placeholder structure checks server-side and rejects any structurally-broken updates. Updates with needsReview=true bypass the structure check and write a sibling `<keyPath>__needsReview: true` key. Use this — never use raw Write on locale JSON.",
       {
         bundleId: z.string(),
         updates: z.array(
@@ -194,7 +194,7 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
     tool(
       "emit_report",
-      "Emit the final localization report. Call this exactly once after the work queue is drained.",
+      "Emit the final localization report. Call this exactly once after next_key_group returns a null group.",
       {
         stats: z
           .string()

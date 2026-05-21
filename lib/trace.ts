@@ -35,6 +35,18 @@ export class TraceRegistry {
     return token;
   }
 
+  // Issue a single token and register it for every taskId in the group.
+  // Used by group-shared pipeline steps (normalize, classify) so that any
+  // member taskId can present the same token in validate_translation.
+  issueForMany(taskIds: string[], step: TraceStep): string {
+    const token = `${step}_${randomBytes(6).toString("hex")}`;
+    for (const taskId of taskIds) {
+      const state = this.open(taskId);
+      state.tokens.set(step, token);
+    }
+    return token;
+  }
+
   verify(taskId: string, presented: string[], required: TraceStep[]): { ok: boolean; missing: TraceStep[] } {
     const state = this.states.get(taskId);
     if (!state) return { ok: false, missing: required };

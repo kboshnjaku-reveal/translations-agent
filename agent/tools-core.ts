@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { comparePlaceholders, extractPlaceholders } from "../lib/placeholders.js";
 import { findMatches, type GlossaryEntry } from "../lib/glossary.js";
 import { validateLocale } from "../lib/locale-validator.js";
@@ -5,7 +6,7 @@ import { scoreConfidence } from "../lib/confidence-scorer.js";
 import { TraceRegistry, REQUIRED_PRE_VALIDATE, type TraceStep } from "../lib/trace.js";
 import { commitBundleUpdates, type Update } from "./locale-writer.js";
 import type { Bundle } from "./repository.js";
-import type { Task } from "./work-queue.js";
+import type { Task, Placement } from "./work-queue.js";
 
 // ── Shared types ───────────────────────────────────────────────────────────────
 
@@ -28,6 +29,19 @@ export type ReportStats = {
   flaggedForReview: number;
   updatedFiles: string[];
   reviewKeys: Array<{ bundle: string; locale: string; keyPath: string; reason?: string }>;
+};
+
+// ── Group response shape ───────────────────────────────────────────────────────
+
+export type KeyGroupResponse = {
+  groupId: string;
+  bundleId: string;
+  sourceLocale: string;
+  keyPath: string;
+  newValue: string;
+  status: "added" | "modified";
+  placement: Placement;
+  locales: Array<{ taskId: string; targetLocale: string }>;
 };
 
 // ── Handler input types ────────────────────────────────────────────────────────
@@ -53,7 +67,7 @@ export type CommitBundleInput = {
 export type EmitReportInput = { stats: string };
 
 export type ToolHandlers = {
-  nextTask: () => Promise<string>;
+  nextKeyGroup: () => Promise<string>;
   normalizeText: (input: NormalizeInput) => Promise<string>;
   searchGlossary: (input: GlossaryInput) => Promise<string>;
   classifyDomain: (input: ClassifyInput) => Promise<string>;
@@ -78,38 +92,61 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
   };
   const remaining = [...deps.tasks];
   const issuedTasks = new Map<string, Task>();
+  // taskId → all member taskIds in its key group. Used so that shared steps
+  // (normalize_text, classify_domain) fan their trace token out to every
+  // sibling locale, satisfying validate_translation's trace check per-locale.
+  const groupMembership = new Map<string, string[]>();
 
   const ok = (payload: unknown) => JSON.stringify(payload);
   const err = (message: string, extra: Record<string, unknown> = {}) =>
     JSON.stringify({ error: message, ...extra });
   const requireTask = (taskId: string): Task | null => issuedTasks.get(taskId) ?? null;
+  const groupOf = (taskId: string): string[] => groupMembership.get(taskId) ?? [taskId];
 
   return {
-    nextTask: async () => {
-      const next = remaining.shift();
-      if (!next) return ok({ task: null, remaining: 0 });
-      issuedTasks.set(next.taskId, next);
-      trace.reset(next.taskId);
-      deps.log(`[next_task] ${next.taskId} → ${next.bundleId}/${next.targetLocale}/${next.keyPath}`);
-      return ok({
-        task: {
-          taskId: next.taskId,
-          bundleId: next.bundleId,
-          sourceLocale: next.sourceLocale,
-          targetLocale: next.targetLocale,
-          keyPath: next.keyPath,
-          newValue: next.newValue,
-          status: next.status,
-          placement: next.placement,
-        },
-        remaining: remaining.length,
-      });
+    nextKeyGroup: async () => {
+      if (remaining.length === 0) return ok({ group: null, remaining: 0 });
+
+      const first = remaining[0]!;
+      const groupKey = `${first.bundleId}::${first.keyPath}`;
+      const members: Task[] = [];
+      const others: Task[] = [];
+      for (const t of remaining) {
+        if (`${t.bundleId}::${t.keyPath}` === groupKey) members.push(t);
+        else others.push(t);
+      }
+      remaining.length = 0;
+      remaining.push(...others);
+
+      const memberTaskIds = members.map((m) => m.taskId);
+      for (const t of members) {
+        issuedTasks.set(t.taskId, t);
+        trace.reset(t.taskId);
+        groupMembership.set(t.taskId, memberTaskIds);
+      }
+
+      const groupId = randomBytes(8).toString("hex");
+      const group: KeyGroupResponse = {
+        groupId,
+        bundleId: first.bundleId,
+        sourceLocale: first.sourceLocale,
+        keyPath: first.keyPath,
+        newValue: first.newValue,
+        status: first.status,
+        placement: first.placement,
+        locales: members.map((m) => ({ taskId: m.taskId, targetLocale: m.targetLocale })),
+      };
+
+      deps.log(
+        `[next_key_group] ${groupId} → ${first.bundleId}/${first.keyPath} × ${members.length} locale(s)`,
+      );
+      return ok({ group, remaining: others.length });
     },
 
     normalizeText: async ({ taskId }) => {
       const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId. Call next_task first.");
-      const traceToken = trace.issue(taskId, "normalize");
+      if (!task) return err("Unknown taskId. Call next_key_group first.");
+      const traceToken = trace.issueForMany(groupOf(taskId), "normalize");
       return ok({ ...task.preNormalized, traceToken });
     },
 
@@ -124,7 +161,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     classifyDomain: async ({ taskId, traceToken }) => {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
-      const newToken = trace.issue(taskId, "classify");
+      const newToken = trace.issueForMany(groupOf(taskId), "classify");
       return ok({ ...task.preClassified, traceToken: newToken, priorToken: traceToken });
     },
 

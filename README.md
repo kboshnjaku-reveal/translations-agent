@@ -23,13 +23,15 @@
 ```
 translations-agent/
 ├── agent/
-│   ├── index.ts          CLI entry — parses flags, runs pre-flight, launches AI
-│   ├── tools.ts          MCP tools exposed to the AI (work queue, commit, glossary)
-│   ├── system-prompt.ts  Builds the instruction prompt for the AI
-│   ├── repository.ts     Scans the repo and discovers locale bundles
-│   ├── git.ts            Detects which keys changed since last commit
-│   ├── work-queue.ts     Flattens changed keys into a task list
-│   └── locale-writer.ts  Atomic JSON writer — the only thing that touches locale files
+│   ├── index.ts            CLI entry — parses flags, runs pre-flight, launches AI
+│   ├── tools-core.ts       Shared MCP handler logic (next_key_group, pipeline, commit)
+│   ├── tools-openai.ts     OpenAI tool builder — wraps handlers as @openai/agents tools
+│   ├── tools-anthropic.ts  Anthropic tool builder — wraps handlers in an MCP SDK server
+│   ├── system-prompt.ts    Builds the instruction prompt for the AI (group-aware)
+│   ├── repository.ts       Scans the repo and discovers locale bundles
+│   ├── git.ts              Detects which keys changed since last commit
+│   ├── work-queue.ts       Builds the task list and pre-computes deterministic steps
+│   └── locale-writer.ts    Atomic JSON writer — the only thing that touches locale files
 ├── lib/
 │   ├── flatten-json.ts   Converts nested JSON ↔ flat key paths
 │   ├── placeholders.ts   Protects {{variables}} from being translated
@@ -41,9 +43,23 @@ translations-agent/
 
 **How a run works:**
 1. Pre-flight: the CLI scans the repo, detects changed source-locale keys via `git diff`, and builds a work queue.
-2. The AI is launched once and drains the queue task-by-task using MCP tools (`next_task`, `normalize_text`, `validate_translation`, `commit_bundle`, etc.).
-3. Each translation goes through an 8-step pipeline: classify → get rules → normalize → translate → validate → score → commit.
-4. Results are written atomically. If confidence is below 0.85, a `<key>__needsReview: true` flag is added alongside the translation.
+2. Pre-flight also pre-computes deterministic steps (`normalizeWhitespace`, `maskPlaceholders`, `classifyDomain`) once per unique source key — the agent reads those results instead of re-computing them per locale.
+3. The AI is launched once and drains the queue **one key group at a time** using MCP tools (`next_key_group`, `normalize_text`, `validate_translation`, `commit_bundle`, etc.). A *key group* is one source key plus every target locale that needs it translated.
+4. Within a group: shared steps (`normalize_text`, `classify_domain`) run once; per-locale steps (`search_glossary`, `get_locale_rules`, `validate_translation`, `score_confidence`) run once per locale; all M locale translations are produced in a single model reasoning turn; one batched `commit_bundle` persists them all.
+5. Results are written atomically. If confidence is below 0.85, a `<key>__needsReview: true` flag is added alongside the translation.
+
+### Why key groups?
+
+For **N changed keys × M target locales**, the naive structure does N×M iterations end-to-end. Two optimisations collapse the work:
+
+| Step | Naive | Key-group |
+|---|---|---|
+| `normalize_text` / `classify_domain` | N×M (recomputed per locale) | N (pre-flight, cached per source key) |
+| `search_glossary` / `get_locale_rules` | N×M | N×M (locale-specific — unchanged) |
+| Model translate round-trips | N×M (one per locale) | N (M translations in one reasoning turn) |
+| `commit_bundle` calls | N×M | N (M updates batched per call) |
+
+The dominant wall-clock win is collapsing N×M sequential model round-trips into N batched ones. Trace-token validation still runs per locale — shared steps fan their token to every member of the group so each locale's `validate_translation` sees the full chain.
 
 ---
 
@@ -124,3 +140,4 @@ translations-agent --no-glossary
 | Translations look wrong | Check what `get_locale_rules` returned — the AI relies on those rules |
 | AI skips pipeline steps | Look for `MISSING_TRACE_TOKEN` in the output |
 | `commit_bundle` keeps rejecting | A `{{placeholder}}` was lost during translation — check the source file |
+| Agent finishes with low translated counts | Check the pre-flight log for `Key groups: N` — each group should consume ~10–15 turns. If the queue is large, the agent may exhaust `maxTurns`; the group-based loop already reduces this ~2–3× vs. one-task-at-a-time |

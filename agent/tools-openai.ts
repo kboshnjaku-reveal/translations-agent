@@ -71,17 +71,17 @@ export function buildOpenAITools(deps: ServerDeps) {
 
   const allTools = [
     tool({
-      name: "next_task",
+      name: "next_key_group",
       description:
-        "Dequeue the next translation task from the work queue. Returns null when the queue is drained. Always call this before starting a new task.",
+        "Dequeue the next key group from the work queue. A group contains one source key and every target locale that needs it translated. Returns {group, remaining} where group is null when the queue is drained. Process all locales in the group together: shared steps (normalize_text, classify_domain) run once per group; per-locale steps (search_glossary, get_locale_rules, validate_translation, score_confidence) run once per locale; commit_bundle runs once per group with batched updates.",
       parameters: z.object({}),
-      execute: async () => h.nextTask(),
+      execute: async () => h.nextKeyGroup(),
     }),
 
     tool({
       name: "normalize_text",
       description:
-        "Normalize the source text: collapse whitespace and mask placeholders ({{x}}, {x}, ${x}, %s, %d) as __PH0__..__PHn__. MUST be called as step 1 of the pipeline.",
+        "GROUP-SHARED. Call ONCE per key group with any member's taskId. Collapses whitespace and masks placeholders ({{x}}, {x}, ${x}, %s, %d) as __PH0__..__PHn__. The returned traceToken is valid for every locale in the group.",
       parameters: normalizeParams,
       execute: async (input: z.infer<typeof normalizeParams>) => h.normalizeText(input),
     }),
@@ -89,7 +89,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "search_glossary",
       description:
-        "Look up curated glossary terms in the source text for the given target locale. MUST be called as step 2. Returns matches with translations and keepEnglish flag.",
+        "PER-LOCALE. Call once for each locale in the group. Looks up curated glossary terms for the given target locale. Returns matches with translations and keepEnglish flag.",
       parameters: glossaryParams,
       execute: async (input: z.infer<typeof glossaryParams>) => h.searchGlossary(input),
     }),
@@ -97,7 +97,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "classify_domain",
       description:
-        "Classify the source text into a domain (eDiscovery, Legal, Tech, or general) by keyword matching. MUST be called as step 3.",
+        "GROUP-SHARED. Call ONCE per key group with any member's taskId. Classifies the source text into a domain (eDiscovery, Legal, Tech, or general). The returned traceToken is valid for every locale in the group.",
       parameters: classifyParams,
       execute: async (input: z.infer<typeof classifyParams>) => h.classifyDomain(input),
     }),
@@ -105,7 +105,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "get_locale_rules",
       description:
-        "Fetch formality, spelling, anti-patterns, structure rules, and placement constraints for the target locale. MUST be called as step 4.",
+        "PER-LOCALE. Call once for each locale in the group. Fetches formality, spelling, anti-patterns, structure rules, and placement constraints for the target locale.",
       parameters: localeRulesParams,
       execute: async (input: z.infer<typeof localeRulesParams>) => h.getLocaleRules(input),
     }),
@@ -137,7 +137,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "commit_bundle",
       description:
-        "Persist translation updates for a single bundle. The host re-runs placeholder structure checks server-side and rejects any structurally-broken updates. Updates with needsReview=true bypass the structure check and write a sibling `<keyPath>__needsReview: true` key. Use this — never use raw Write on locale JSON.",
+        "Persist translation updates for a single bundle. Call ONCE per key group with one entry in `updates` for every locale you translated. The host re-runs placeholder structure checks server-side and rejects any structurally-broken updates. Updates with needsReview=true bypass the structure check and write a sibling `<keyPath>__needsReview: true` key. Use this — never use raw Write on locale JSON.",
       parameters: commitBundleParams,
       execute: async (input: z.infer<typeof commitBundleParams>) => h.commitBundle(input),
     }),
@@ -145,7 +145,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "emit_report",
       description:
-        "Emit the final localization report. Call this exactly once after the work queue is drained.",
+        "Emit the final localization report. Call this exactly once after next_key_group returns a null group.",
       parameters: emitReportParams,
       execute: async (input: z.infer<typeof emitReportParams>) => h.emitReport(input),
     }),

@@ -62,16 +62,22 @@ async function main() {
     for (const n of toolNames) console.log(`  ${n}`);
   }
 
+  const groupMap = new Map<string, { bundleId: string; keyPath: string; placement: string; targetLocales: string[] }>();
+  for (const t of tasks) {
+    const key = `${t.bundleId}::${t.keyPath}`;
+    let entry = groupMap.get(key);
+    if (!entry) {
+      entry = { bundleId: t.bundleId, keyPath: t.keyPath, placement: t.placement, targetLocales: [] };
+      groupMap.set(key, entry);
+    }
+    entry.targetLocales.push(t.targetLocale);
+  }
+
   const prompt = await buildSystemPrompt({
     bundleCount: bundles.length,
     taskCount: tasks.length,
-    queuePreview: tasks.slice(0, 5).map((t) => ({
-      taskId: t.taskId,
-      bundleId: t.bundleId,
-      targetLocale: t.targetLocale,
-      keyPath: t.keyPath,
-      placement: t.placement,
-    })),
+    groupCount: groupMap.size,
+    queuePreview: [...groupMap.values()].slice(0, 5),
     webValidationEnabled: false,
     toolNames,
   });

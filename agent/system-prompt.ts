@@ -4,10 +4,18 @@ import { fileURLToPath } from "node:url";
 
 const PROMPT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "prompts");
 
+export type GroupPreview = {
+  bundleId: string;
+  keyPath: string;
+  placement: string;
+  targetLocales: string[];
+};
+
 export type PromptContext = {
   bundleCount: number;
   taskCount: number;
-  queuePreview: Array<{ taskId: string; bundleId: string; targetLocale: string; keyPath: string; placement: string }>;
+  groupCount: number;
+  queuePreview: GroupPreview[];
   webValidationEnabled: boolean;
   toolNames: string[];
 };
@@ -24,8 +32,8 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   const tools = ctx.toolNames.join(", ");
   const preview = ctx.queuePreview
     .map(
-      (t, i) =>
-        `  ${i + 1}. taskId=${t.taskId} bundle=${t.bundleId} → ${t.targetLocale} key=${t.keyPath} placement=${t.placement}`,
+      (g, i) =>
+        `  ${i + 1}. bundle=${g.bundleId} key=${g.keyPath} placement=${g.placement} → [${g.targetLocales.join(", ")}]`,
     )
     .join("\n");
 
@@ -34,10 +42,10 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
 # Run Context
 
 - Detected ${ctx.bundleCount} bundle(s).
-- Work queue length: ${ctx.taskCount} task(s).
+- Work queue: ${ctx.groupCount} key group(s), ${ctx.taskCount} total (key × locale) task(s).
 - Web validation: ${ctx.webValidationEnabled ? "ENABLED (call WebSearch on ambiguous/legal content)" : "DISABLED (omit webScore from score_confidence)"}.
 
-First 5 tasks (preview):
+First 5 key groups (preview):
 ${preview || "  (queue empty — emit_report and stop)"}
 
 Available tools (this run): ${tools}.
@@ -52,6 +60,6 @@ ${safety.trim()}
 
 # Termination
 
-When \`next_task()\` returns null, call \`emit_report({ stats: JSON.stringify({...your-tally...}) })\` exactly once and stop responding. Do not produce any further tool calls or text.
+When \`next_key_group()\` returns \`{group: null}\`, call \`emit_report({ stats: JSON.stringify({...your-tally...}) })\` exactly once and stop responding. Do not produce any further tool calls or text.
 `;
 }

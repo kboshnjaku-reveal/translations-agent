@@ -435,13 +435,22 @@ async function main() {
     log: (msg: string) => console.log(`  ${msg}`),
   };
 
-  const queuePreview = tasks.slice(0, 5).map((t) => ({
-    taskId: t.taskId,
-    bundleId: t.bundleId,
-    targetLocale: t.targetLocale,
-    keyPath: t.keyPath,
-    placement: t.placement,
-  }));
+  // Build group preview: collapse the cartesian work queue back into the
+  // {bundleId, keyPath} groups the agent actually iterates over. Keep
+  // insertion order so the preview reflects dequeue order.
+  const groupMap = new Map<string, { bundleId: string; keyPath: string; placement: string; targetLocales: string[] }>();
+  for (const t of tasks) {
+    const key = `${t.bundleId}::${t.keyPath}`;
+    let entry = groupMap.get(key);
+    if (!entry) {
+      entry = { bundleId: t.bundleId, keyPath: t.keyPath, placement: t.placement, targetLocales: [] };
+      groupMap.set(key, entry);
+    }
+    entry.targetLocales.push(t.targetLocale);
+  }
+  const groupCount = groupMap.size;
+  const queuePreview = [...groupMap.values()].slice(0, 5);
+  console.log(`  Key groups: ${groupCount} (each runs shared steps once + per-locale steps × ${tasks.length / Math.max(groupCount, 1) | 0} locales).`);
 
   console.log(`\n→ Launching agent (${provider})…\n`);
 
@@ -450,6 +459,7 @@ async function main() {
     const systemPrompt = await buildSystemPrompt({
       bundleCount: bundles.length,
       taskCount: tasks.length,
+      groupCount,
       queuePreview,
       webValidationEnabled: cli.webValidate,
       toolNames,
@@ -460,6 +470,7 @@ async function main() {
     const systemPrompt = await buildSystemPrompt({
       bundleCount: bundles.length,
       taskCount: tasks.length,
+      groupCount,
       queuePreview,
       webValidationEnabled: cli.webValidate,
       toolNames,
