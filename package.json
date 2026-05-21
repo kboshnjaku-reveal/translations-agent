@@ -13,6 +13,7 @@
     "start": "tsx agent/index.ts",
     "dev": "tsx agent/index.ts",
     "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx/esm test/lib/*.test.ts test/integration/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "files": [

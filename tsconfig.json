@@ -16,6 +16,6 @@
     "noUncheckedIndexedAccess": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["agent/**/*.ts", "lib/**/*.ts"],
+  "include": ["agent/**/*.ts", "lib/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist", "fixtures"]
 }
