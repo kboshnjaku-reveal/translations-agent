@@ -1,6 +1,5 @@
-import { maskPlaceholders, comparePlaceholders, extractPlaceholders, normalizeWhitespace } from "../lib/placeholders.js";
+import { comparePlaceholders, extractPlaceholders } from "../lib/placeholders.js";
 import { findMatches, type GlossaryEntry } from "../lib/glossary.js";
-import { classifyDomain } from "../lib/domain-classifier.js";
 import { validateLocale } from "../lib/locale-validator.js";
 import { scoreConfidence } from "../lib/confidence-scorer.js";
 import { TraceRegistry, REQUIRED_PRE_VALIDATE, type TraceStep } from "../lib/trace.js";
@@ -107,13 +106,11 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       });
     },
 
-    normalizeText: async ({ taskId, text }) => {
+    normalizeText: async ({ taskId }) => {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId. Call next_task first.");
-      const normalized = normalizeWhitespace(text);
-      const { masked, placeholders } = maskPlaceholders(normalized);
       const traceToken = trace.issue(taskId, "normalize");
-      return ok({ normalized: masked, original: normalized, placeholders, traceToken });
+      return ok({ ...task.preNormalized, traceToken });
     },
 
     searchGlossary: async ({ taskId, text, targetLocale, traceToken }) => {
@@ -124,12 +121,11 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       return ok({ matches, traceToken: newToken, priorToken: traceToken });
     },
 
-    classifyDomain: async ({ taskId, text, traceToken }) => {
+    classifyDomain: async ({ taskId, traceToken }) => {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
-      const result = classifyDomain(text);
       const newToken = trace.issue(taskId, "classify");
-      return ok({ ...result, traceToken: newToken, priorToken: traceToken });
+      return ok({ ...task.preClassified, traceToken: newToken, priorToken: traceToken });
     },
 
     getLocaleRules: async ({ taskId, locale, placement, traceToken }) => {
