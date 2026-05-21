@@ -38,20 +38,35 @@ const KEEP_ENGLISH_HINTS = new Set([
 
 export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): GlossaryEntry[] {
   const source = sources.find((s) => s.locale === sourceLocale);
-  if (!source) return [];
+  if (!source) {
+    console.warn(`[glossary] No source locale found for '${sourceLocale}'. Available: ${sources.map(s => s.locale).join(', ')}`);
+    return [];
+  }
 
   const targets = sources.filter((s) => s.locale !== sourceLocale);
-  if (targets.length === 0) return [];
+  if (targets.length === 0) {
+    console.warn(`[glossary] No target locales found. Source: ${sourceLocale}`);
+    return [];
+  }
 
   const sourceMap = new Map<string, string>();
   for (const e of source.entries) sourceMap.set(e.keyPath, e.value);
 
   const candidateCounts = new Map<string, { source: string; translations: Map<string, Map<string, number>> }>();
 
+  let processedPairs = 0;
+  let skippedMissingInSource = 0;
+  let skippedShortTerms = 0;
+  let skippedWordCountMismatch = 0;
+
   for (const target of targets) {
     for (const targetEntry of target.entries) {
       const sourceValue = sourceMap.get(targetEntry.keyPath);
-      if (!sourceValue) continue;
+      if (!sourceValue) {
+        skippedMissingInSource++;
+        continue;
+      }
+      processedPairs++;
 
       const srcTerms = extractTerms(sourceValue);
       const tgtTerms = extractTerms(targetEntry.value);
@@ -59,11 +74,17 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
       for (let i = 0; i < srcTerms.length; i++) {
         for (let j = i + 1; j <= Math.min(i + MAX_WORDS, srcTerms.length); j++) {
           const srcPhrase = srcTerms.slice(i, j).join(" ");
-          if (!srcPhrase || srcPhrase.length < 3) continue;
+          if (!srcPhrase || srcPhrase.length < 3) {
+            skippedShortTerms++;
+            continue;
+          }
 
           // Find the best-matching target phrase of same word count
           const wordCount = j - i;
-          if (tgtTerms.length < wordCount) continue;
+          if (tgtTerms.length < wordCount) {
+            skippedWordCountMismatch++;
+            continue;
+          }
 
           const normalizedSrc = normalize(srcPhrase);
           let bestTgt: string | null = null;
@@ -91,9 +112,15 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
     }
   }
 
+  console.warn(`[glossary] Processing: source entries=${source.entries.length}, target locales=${targets.length}, total target entries=${targets.reduce((a, t) => a + t.entries.length, 0)}, processed pairs=${processedPairs}, skipped (missing in source)=${skippedMissingInSource}`);
+
   const glossary: GlossaryEntry[] = [];
+  let skippedByCoverage = 0;
   for (const { source: src, translations } of candidateCounts.values()) {
-    if (translations.size < MIN_LOCALE_COVERAGE) continue;
+    if (translations.size < MIN_LOCALE_COVERAGE) {
+      skippedByCoverage++;
+      continue;
+    }
 
     const resolved: Record<string, string> = {};
     let allKeepEnglish = true;
@@ -107,20 +134,28 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
     glossary.push({ source: src, translations: resolved, keepEnglish });
   }
 
+  console.warn(`[glossary] Candidates: ${candidateCounts.size}, skipped by MIN_LOCALE_COVERAGE(${MIN_LOCALE_COVERAGE}): ${skippedByCoverage}, before dedup: ${glossary.length}`);
+
   // Longest-first for greedy matching
   glossary.sort((a, b) => b.source.length - a.source.length);
 
   // Deduplicate overlaps: if a longer phrase covers a shorter one, the shorter is allowed only if it has distinct translation
-  return dedupeOverlaps(glossary);
+  const deduped = dedupeOverlaps(glossary);
+  console.warn(`[glossary] After dedupeOverlaps: ${deduped.length}`);
+  return deduped;
 }
 
 // Merge seed entries (manually curated) with auto-built ones. Seed wins for any source term it covers.
 export function mergeWithSeed(autoBuilt: GlossaryEntry[], seed: GlossaryEntry[]): GlossaryEntry[] {
   const seedSources = new Set(seed.map((e) => normalize(e.source)));
   const filtered = autoBuilt.filter((e) => !seedSources.has(normalize(e.source)));
+  console.warn(`[glossary] mergeWithSeed: autoBuilt=${autoBuilt.length}, seed=${seed.length}, filtered (non-conflicting autoBuilt)=${filtered.length}`);
+  
   const merged = [...seed, ...filtered];
   merged.sort((a, b) => b.source.length - a.source.length);
-  return dedupeOverlaps(merged);
+  const final = dedupeOverlaps(merged);
+  console.warn(`[glossary] After final dedupeOverlaps: ${final.length}`);
+  return final;
 }
 
 export function findMatches(glossary: GlossaryEntry[], text: string, targetLocale: string): GlossaryMatch[] {

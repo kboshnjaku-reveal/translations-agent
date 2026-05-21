@@ -570,7 +570,9 @@ async function main() {
     const seedPath = path.resolve(__dirname, "..", "data", "glossary-seed.json");
     const seed = JSON.parse(await fs.readFile(seedPath, "utf8")) as GlossaryEntry[];
     glossary = mergeWithSeed(autoBuilt, seed);
-    info(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuilt.length} auto-built, after merge).`);
+    // Count how many auto-built entries actually made it through the merge (not filtered by seed conflicts)
+    const autoBuiltInFinal = glossary.length - seed.length;
+    info(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuiltInFinal} auto-built after merge, ${autoBuilt.length} auto-built before merge).`);
   } else {
     info("  Glossary: disabled (--no-glossary)");
   }
