@@ -1,101 +1,39 @@
 # translations-agent
 
-## What it does
-
-`translations-agent` is a CLI tool that automatically keeps your app's translation files in sync. You run it inside any git repository that contains JSON locale files (e.g. `en.json`, `fr.json`). It compares the current git diff, finds any source-language keys that were added or changed, and uses an AI model to translate only those keys into every other language — writing the results directly back into the right locale files. It never modifies application code, never deletes keys, and never re-translates keys that haven't changed.
-
----
-
-## Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js ≥ 20, TypeScript |
-| AI providers | OpenAI (`gpt-4o` via `@openai/agents`) or Anthropic (`claude-opus-4-7` via `@anthropic-ai/claude-agent-sdk`) |
-| Git integration | `simple-git` |
-| File scanning | `fast-glob` |
-| Schema validation | `zod` |
-
----
-
-## Architecture
-
-```
-translations-agent/
-├── agent/
-│   ├── index.ts            CLI entry — parses flags, runs pre-flight, launches AI
-│   ├── tools-core.ts       Shared MCP handler logic (next_key_group, pipeline, commit)
-│   ├── tools-openai.ts     OpenAI tool builder — wraps handlers as @openai/agents tools
-│   ├── tools-anthropic.ts  Anthropic tool builder — wraps handlers in an MCP SDK server
-│   ├── system-prompt.ts    Builds the instruction prompt for the AI (group-aware)
-│   ├── repository.ts       Scans the repo and discovers locale bundles
-│   ├── git.ts              Detects which keys changed since last commit
-│   ├── work-queue.ts       Builds the task list and pre-computes deterministic steps
-│   └── locale-writer.ts    Atomic JSON writer — the only thing that touches locale files
-├── lib/
-│   ├── flatten-json.ts   Converts nested JSON ↔ flat key paths
-│   ├── placeholders.ts   Protects {{variables}} from being translated
-│   ├── glossary.ts       Builds a project-specific term glossary automatically
-│   └── locale-validator.ts / confidence-scorer.ts / domain-classifier.ts
-└── data/
-    └── locale-rules.json  Per-language grammar and formatting rules
-```
-
-**How a run works:**
-1. Pre-flight: the CLI scans the repo, detects changed source-locale keys via `git diff`, and builds a work queue.
-2. Pre-flight also pre-computes deterministic steps (`normalizeWhitespace`, `maskPlaceholders`, `classifyDomain`) once per unique source key — the agent reads those results instead of re-computing them per locale.
-3. The AI is launched once and drains the queue **one key group at a time** using MCP tools (`next_key_group`, `normalize_text`, `validate_translation`, `commit_bundle`, etc.). A *key group* is one source key plus every target locale that needs it translated.
-4. Within a group: shared steps (`normalize_text`, `classify_domain`) run once; per-locale steps (`search_glossary`, `get_locale_rules`, `validate_translation`, `score_confidence`) run once per locale; all M locale translations are produced in a single model reasoning turn; one batched `commit_bundle` persists them all.
-5. Results are written atomically. If confidence is below 0.85, a `<key>__needsReview: true` flag is added alongside the translation.
-
-### Why key groups?
-
-For **N changed keys × M target locales**, the naive structure does N×M iterations end-to-end. Two optimisations collapse the work:
-
-| Step | Naive | Key-group |
-|---|---|---|
-| `normalize_text` / `classify_domain` | N×M (recomputed per locale) | N (pre-flight, cached per source key) |
-| `search_glossary` / `get_locale_rules` | N×M | N×M (locale-specific — unchanged) |
-| Model translate round-trips | N×M (one per locale) | N (M translations in one reasoning turn) |
-| `commit_bundle` calls | N×M | N (M updates batched per call) |
-
-The dominant wall-clock win is collapsing N×M sequential model round-trips into N batched ones. Trace-token validation still runs per locale — shared steps fan their token to every member of the group so each locale's `validate_translation` sees the full chain.
+A CLI that keeps your app's translation files in sync. Run it inside any git repository that contains JSON locale files (`en.json`, `fr.json`, …). It diffs the source locale against the last commit, finds added or changed keys, and uses an AI model to translate them into every target locale — writing results back into the right files. It never modifies application code, never deletes keys, and never re-translates keys that haven't changed.
 
 ---
 
 ## Getting started
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
 npm install
 ```
 
+Requires Node ≥ 20.
+
 ### 2. Set your API key
 
-Create a `.env` file in the root of **this** repo (or export into your shell):
-
-```
-# Pick one:
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+```bash
+cp .env.example .env
+# edit .env and uncomment one of OPENAI_API_KEY / ANTHROPIC_API_KEY
 ```
 
-If both are set, the agent will ask you to choose at startup.
+If both keys are set, the CLI will ask you to choose at startup.
 
 ### 3. Run inside your target repository
 
-Navigate to the repo whose locale files you want to translate, then run:
-
 ```bash
-# Using npx + tsx (no build step needed):
+# Dev (no build step):
 npx tsx /path/to/translations-agent/agent/index.ts
 
-# Or after building (npm run build):
+# Or after `npm run build`:
 translations-agent
 ```
 
-The agent will ask for confirmation before writing anything.
+The agent prompts for confirmation before writing anything. Pass `--yes` to skip the prompt (for CI), or `--dry-run` to preview without writing.
 
 ---
 
@@ -103,20 +41,29 @@ The agent will ask for confirmation before writing anything.
 
 | Flag | What it does |
 |---|---|
-| `--no-web-validate` | Disable web search validation for ambiguous or legal phrases (enabled by default) |
-| `--no-glossary` | Disable glossary matching (useful for testing raw model output) |
-| `--source-locale <code>` | Override auto-detection of the source language (e.g. `--source-locale en-US`) |
-| `--root <path>` | Point to a different directory instead of the current working directory |
-| `--model <name>` | Use a specific model (e.g. `--model gpt-4o-mini`). Defaults to `gpt-4o` for OpenAI and `claude-opus-4-7` for Anthropic |
-| `--help`, `-h` | Print the help message |
+| `--dry-run` | Run the full pipeline (model calls, validation, scoring) but skip the final disk writes. Report stats are still produced. |
+| `--yes`, `-y` | Skip the interactive permission prompt. Use for unattended runs (CI, scripts). |
+| `--json` | Emit the final report as JSON on stdout. Progress and tool-call narration are routed to stderr. |
+| `--no-web-validate` | Disable web search validation for ambiguous or legal phrases (enabled by default). |
+| `--no-glossary` | Disable glossary matching (useful for testing raw model output). |
+| `--source-locale <code>` | Override auto-detection of the source language (e.g. `--source-locale en-US`). |
+| `--root <path>` | Operate on a directory other than the current working directory. |
+| `--model <name>` | Use a specific model. Defaults to `gpt-4o` (OpenAI) or `claude-opus-4-7` (Anthropic). |
+| `--help`, `-h` | Print the help message. |
 
 ### Examples
 
 ```bash
-# Basic run — detects provider from .env, translates changed keys (web validation on by default)
+# Basic run — detect provider from .env, translate changed keys
 translations-agent
 
-# Use a different model
+# Preview without writing (good for PRs / CI gates)
+translations-agent --dry-run --yes
+
+# Machine-readable report for piping into jq, GitHub Actions, etc.
+translations-agent --dry-run --yes --json | jq '.flaggedForReview'
+
+# Use a cheaper model
 translations-agent --model gpt-4o-mini
 
 # Operate on a repo in another folder
@@ -124,20 +71,87 @@ translations-agent --root ../my-app
 
 # Force a specific source locale and disable web validation
 translations-agent --source-locale en-US --no-web-validate
-
-# Skip glossary matching to test raw model output
-translations-agent --no-glossary
 ```
 
 ---
 
-## Debugging
+## What it does (and what it doesn't)
 
-| Tip | How |
+**Does:**
+
+- Detects added and modified keys in your source-locale JSON since `HEAD`.
+- Translates each changed key into every target locale present in the same directory.
+- Preserves placeholders (`{{var}}`, `{var}`, `${var}`, `%s`, `%d`), ICU plural/select syntax, HTML tags, and escape sequences.
+- Applies per-locale grammar rules (formality, spelling, anti-patterns) defined in `data/locale-rules.json`.
+- Scores each translation; low-confidence translations get a sibling `<key>__needsReview: true` flag rather than being dropped.
+- Writes atomically (tmp + rename), so a crash mid-write leaves the original file intact.
+
+**Does not:**
+
+- Modify application code, refactor, or rename keys.
+- Translate from a non-source locale.
+- Delete existing keys.
+- Re-translate keys whose values did not change.
+- Stay interactive — it exits after one run by design.
+
+---
+
+## Output and review workflow
+
+After a run, the CLI prints a report showing:
+
+- Detected bundles (each directory containing source-locale JSON is its own bundle).
+- Total changed keys, translated automatically, flagged for review.
+- Updated files.
+- Review queue — keys written with `__needsReview: true` and the reason.
+
+A confidence score below 0.85 produces an `__needsReview: true` sibling key. The translation is still written (best-effort), but you should treat it as a draft. Search your locales for `__needsReview` after a run, fix or accept each one, and delete the flag.
+
+In `--json` mode, the same data lands on stdout as a single JSON object — useful for PR bots and CI gates:
+
+```json
+{
+  "detectedBundles": 1,
+  "sourceLocale": "en",
+  "targetLocales": ["de", "es", "nl"],
+  "changedKeys": 3,
+  "translatedAuto": 7,
+  "flaggedForReview": 2,
+  "updatedFiles": ["locales/de.json", "locales/es.json", "locales/nl.json"],
+  "reviewKeys": [
+    { "bundle": "locales", "locale": "de", "keyPath": "checkout.legal", "reason": "..." }
+  ]
+}
+```
+
+---
+
+## Security model
+
+The agent runs against your real filesystem and your git config, so the tool was built with the principle of least privilege:
+
+- **No shell access.** The agent has no `Bash`, `Exec`, or `Shell` tool. It cannot run arbitrary commands.
+- **No raw file writes.** Locale JSON is written only through the `commit_bundle` MCP tool, which runs a server-side placeholder structure check before persisting. Updates that lose or break a placeholder are rejected.
+- **Scoped reads.** The agent reads locale files only through `read_locale_file`, restricted to the bundles discovered during pre-flight. It cannot read arbitrary files in your repo.
+- **Atomic writes.** Each locale file is written via `tmp + rename`, so a crash mid-write leaves the original intact.
+- **Git diff is the source of truth.** Deterministic pre-flight (not the AI) decides which keys to translate. The agent can only act on the queue it is handed.
+- **Dry-run available.** `--dry-run` runs every model call and validator but skips disk writes, so you can preview the full report before applying.
+
+---
+
+## Troubleshooting
+
+| Symptom | Where to look |
 |---|---|
-| See every tool call the AI makes | `DEBUG_TRACE=1 translations-agent` |
-| Check the work queue before the AI runs | It is printed to the console at the end of pre-flight |
-| Translations look wrong | Check what `get_locale_rules` returned — the AI relies on those rules |
-| AI skips pipeline steps | Look for `MISSING_TRACE_TOKEN` in the output |
-| `commit_bundle` keeps rejecting | A `{{placeholder}}` was lost during translation — check the source file |
-| Agent finishes with low translated counts | Check the pre-flight log for `Key groups: N` — each group should consume ~10–15 turns. If the queue is large, the agent may exhaust `maxTurns`; the group-based loop already reduces this ~2–3× vs. one-task-at-a-time |
+| Translations look wrong | Check `data/locale-rules.json` for the target locale — the agent relies on those rules. |
+| Agent skips pipeline steps | Look for `MISSING_TRACE_TOKEN` in the output — a tool call was made without the required prior step. |
+| `commit_bundle` keeps rejecting | A `{{placeholder}}` was lost during translation. Inspect the source file and the rejection reason. |
+| Unexpected work queue | The queue is printed to stderr at the end of pre-flight, before the agent launches. Inspect it there. |
+| Provider not selected | Confirm the correct key is exported. Both keys set triggers the interactive choice prompt — pass `--yes` after first time. |
+| `Agent finished without emitting a report` | The agent exited before calling `emit_report`. Usually means it hit `maxTurns`. Re-run; long queues may need splitting. |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project layout, architecture, dev workflow, and how to extend the pipeline.
