@@ -5,6 +5,7 @@ import { validateLocale } from "../lib/locale-validator.js";
 import { scoreConfidence } from "../lib/confidence-scorer.js";
 import { TraceRegistry, REQUIRED_PRE_VALIDATE, type TraceStep } from "../lib/trace.js";
 import { commitBundleUpdates, type Update } from "./locale-writer.js";
+import { getDeep } from "../lib/flatten-json.js";
 import type { Bundle } from "./repository.js";
 import type { Task, Placement } from "./work-queue.js";
 
@@ -71,6 +72,7 @@ export type CommitBundleInput = {
   updates: Array<{ targetLocale: string; keyPath: string; value: string; needsReview: boolean; failureReason?: string | null }>;
 };
 export type EmitReportInput = { stats: string };
+export type TranslationMemoryInput = { taskId: string; targetLocale: string };
 
 export type ToolHandlers = {
   nextKeyGroup: () => Promise<string>;
@@ -83,7 +85,43 @@ export type ToolHandlers = {
   readLocaleFile: (input: ReadLocaleInput) => Promise<string>;
   commitBundle: (input: CommitBundleInput) => Promise<string>;
   emitReport: (input: EmitReportInput) => Promise<string>;
+  translationMemory: (input: TranslationMemoryInput) => Promise<string>;
 };
+
+// ── Translation memory helpers ─────────────────────────────────────────────────
+
+/**
+ * Produces a compact, human-readable description of what changed between two
+ * source strings at the word level. Used by the translation_memory tool to give
+ * the agent a concise edit signal rather than two raw blobs to compare.
+ *
+ * The diff is intentionally simple (set-based, not positional) — sufficient for
+ * the agent to understand which words were added or removed without needing a
+ * library dependency.
+ */
+function computeSourceDiff(oldSource: string, newSource: string): string {
+  const tokenise = (s: string) =>
+    s
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+
+  const oldTokens = tokenise(oldSource);
+  const newTokens = tokenise(newSource);
+
+  const oldSet = new Set(oldTokens);
+  const newSet = new Set(newTokens);
+
+  const removed = oldTokens.filter((t) => !newSet.has(t));
+  const added = newTokens.filter((t) => !oldSet.has(t));
+
+  const parts: string[] = [];
+  if (removed.length > 0) parts.push(`removed: [${[...new Set(removed)].join(", ")}]`);
+  if (added.length > 0) parts.push(`added: [${[...new Set(added)].join(", ")}]`);
+  return parts.length > 0
+    ? parts.join("; ")
+    : "no word-level changes (reordering or punctuation only)";
+}
 
 // ── Handler factory ────────────────────────────────────────────────────────────
 
@@ -317,6 +355,29 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
 
       deps.onReport(finalStats);
       return ok({ ok: true, summary: finalStats });
+    },
+
+    translationMemory: async ({ taskId, targetLocale }) => {
+      const task = requireTask(taskId);
+      if (!task) return err("Unknown taskId. Call next_key_group first.");
+
+      // For added keys there is no prior translation to consult.
+      if (task.status === "added" || task.oldValue === null) {
+        return ok({ oldSource: null, oldTarget: null, sourceDiff: null });
+      }
+
+      // Look up the current on-disk translation for this key in the target locale.
+      const bundle = deps.bundles.find((b) => b.id === task.bundleId);
+      const targetFile = bundle?.targets.find((t) => t.locale === targetLocale);
+      const oldTarget = targetFile ? (getDeep(targetFile.json, task.keyPath) ?? null) : null;
+
+      const sourceDiff = computeSourceDiff(task.oldValue, task.newValue);
+
+      return ok({
+        oldSource: task.oldValue,
+        oldTarget,
+        sourceDiff,
+      });
     },
   };
 }

@@ -10,6 +10,17 @@ Use any member's `taskId` (e.g. `group.locales[0].taskId`). The trace tokens you
 
 2. **classify_domain** — `{ taskId, text: group.newValue, traceToken: <from normalize> }`. Returned domain informs tone for every locale: legal/eDiscovery → conservative, formal; tech → product-UI conventional. Call once.
 
+## PER-LOCALE — call ONCE for each locale in `group.locales` (MODIFIED groups only)
+
+**Step 0 applies only when `group.status === "modified"`.**
+
+0. **translation_memory** — `{ taskId: L.taskId, targetLocale: L.targetLocale }`. Fetches the prior translation context for this locale:
+   - `oldSource`: what the English source string was before the change.
+   - `oldTarget`: what is currently written in the target locale file for this key.
+   - `sourceDiff`: a word-level summary of what was added or removed in English (e.g. `"removed: [delete]; added: [remove, permanently]"`).
+
+   Save `tm` for use in step 5. If `tm.oldTarget` is null (key exists in source but not yet in target), fall back to translating from scratch.
+
 ## PER-LOCALE — call ONCE for each locale in `group.locales`
 
 For each `L` in `group.locales`:
@@ -31,6 +42,10 @@ For each `L` in `group.locales`:
    - Preserve HTML/XML tags, escape sequences, and inline formatting.
    - Preserve intent and tone, not just words.
    - For domain `Legal` or `eDiscovery`: prefer conservative, formal phrasing; do not paraphrase aggressively.
+
+   **For MODIFIED groups** (`group.status === "modified"`): if `tm.oldTarget` is non-null, start from `tm.oldTarget` and apply only the edits described by `tm.sourceDiff`. Preserve all phrasing that has not changed in the English source. This surgical approach avoids churning clean copy and keeps review noise low. Only fall back to translating `group.newValue` from scratch if `tm.oldTarget` is null.
+
+   **For ADDED groups** (`group.status === "added"`): translate `group.newValue` normally.
 
    Do **not** return to the agent loop between locales. Translate them all in one turn.
 

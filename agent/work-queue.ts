@@ -33,7 +33,14 @@ export type Task = {
   sourceLocale: string;
   targetLocale: string;
   keyPath: string;
+  /** The new (current) source value to translate. */
   newValue: string;
+  /**
+   * The previous source value from git HEAD, or null for added keys.
+   * Present on modified keys so the translation_memory tool can compute
+   * what changed between the old and new source string.
+   */
+  oldValue: string | null;
   status: "added" | "modified";
   placement: Placement;
   preNormalized: PreNormalized;
@@ -67,6 +74,7 @@ export function buildWorkQueue(input: { bundles: Bundle[]; changedByBundle: Map<
           targetLocale: target.locale,
           keyPath: change.keyPath,
           newValue: change.newValue,
+          oldValue: change.oldValue,
           status: change.status,
           placement: inferPlacement(change.keyPath),
           ...precomputed,

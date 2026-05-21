@@ -64,6 +64,11 @@ const emitReportParams = z.object({
     ),
 });
 
+const translationMemoryParams = z.object({
+  taskId: z.string(),
+  targetLocale: z.string(),
+});
+
 // ── Tool builder ───────────────────────────────────────────────────────────────
 
 export function buildOpenAITools(deps: ServerDeps) {
@@ -148,6 +153,14 @@ export function buildOpenAITools(deps: ServerDeps) {
         "Emit the final localization report. Call this exactly once after next_key_group returns a null group.",
       parameters: emitReportParams,
       execute: async (input: z.infer<typeof emitReportParams>) => h.emitReport(input),
+    }),
+
+    tool({
+      name: "translation_memory",
+      description:
+        "PER-LOCALE. Call once per locale for MODIFIED key groups (group.status === 'modified') before translating. Returns { oldSource, oldTarget, sourceDiff } where oldSource is the previous English value, oldTarget is the existing translation on disk for this locale, and sourceDiff summarises word-level changes between oldSource and newSource. Use oldTarget as the starting point and apply only the changes indicated by sourceDiff — do not retranslate from scratch. Returns all-null values for added keys (no prior translation exists).",
+      parameters: translationMemoryParams,
+      execute: async (input: z.infer<typeof translationMemoryParams>) => h.translationMemory(input),
     }),
   ];
 

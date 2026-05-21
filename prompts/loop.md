@@ -18,7 +18,7 @@ while true:
                            traceToken: norm.traceToken })
 
   # ── Per-locale prep (call FOR EACH locale) ──
-  prep = {}   # targetLocale → { glossaryToken, rulesToken, matches, rules, placementConstraint }
+  prep = {}   # targetLocale → { glossaryToken, rulesToken, matches, rules, placementConstraint, tm }
   for L in group.locales:
     g = search_glossary({ taskId: L.taskId, text: group.newValue,
                           sourceLocale: group.sourceLocale,
@@ -27,11 +27,23 @@ while true:
     r = get_locale_rules({ taskId: L.taskId, locale: L.targetLocale,
                            placement: group.placement,
                            traceToken: g.traceToken })
-    prep[L.targetLocale] = { g, r }
+    # Translation memory: fetch prior source + translation for modified keys.
+    # For added keys the response is all-null; skip the call if you prefer.
+    tm = null
+    if group.status == "modified":
+      tm = translation_memory({ taskId: L.taskId, targetLocale: L.targetLocale })
+    prep[L.targetLocale] = { g, r, tm }
 
   # ── Translate ALL locales in ONE reasoning step ──
   # Produce a {targetLocale: translation} map. This is your ONE chance to
   # batch translations — do not return to the loop between locales.
+  #
+  # For MODIFIED groups (group.status == "modified"):
+  #   If tm.oldTarget is non-null, start from tm.oldTarget and apply only the
+  #   changes described by tm.sourceDiff. Preserve unaffected phrases verbatim.
+  #   This is preferable to retranslating from scratch, which churns clean copy.
+  # For ADDED groups (group.status == "added"):
+  #   Translate group.newValue normally using the glossary and locale rules.
   translations = produce_all_translations(group, prep)
 
   # ── Per-locale validate + score (with bounded retry) ──
@@ -72,8 +84,9 @@ Rules:
 
 - **One key group per iteration.** Translate every locale for that key before moving on.
 - **Shared steps run once.** `normalize_text` and `classify_domain` are called exactly once per group; their `traceToken`s are valid for every locale in the group's `locales` array.
-- **Per-locale steps run per locale.** `search_glossary`, `get_locale_rules`, `validate_translation`, `score_confidence` each run once per locale.
+- **Per-locale steps run per locale.** `search_glossary`, `get_locale_rules`, `translation_memory` (modified only), `validate_translation`, `score_confidence` each run once per locale.
 - **Batch the translate step.** Produce all M translations in a single reasoning turn — do not return to the loop between locales.
+- **Translation memory for modified keys.** When `group.status === "modified"` and `tm.oldTarget` is non-null, start from `oldTarget` and apply only the changes described by `sourceDiff`. Do not retranslate from scratch — that churns clean copy and risks unnecessary review flags.
 - **Per-locale retries.** If `de` validates clean but `fr` fails, retry only `fr`. Maximum 3 validate calls per locale; after the third failure, mark that locale `needsReview: true` and continue.
 - **One commit per group.** `commit_bundle` is called once with one entry in `updates` per locale.
 - **Group isolation.** Do not let text or context from a prior group leak into a different group's translations.

@@ -204,6 +204,14 @@ export function buildAnthropicServer(deps: ServerDeps) {
       },
       async ({ stats }: { stats: string }) => wrapResult(await h.emitReport({ stats })),
     ),
+
+    tool(
+      "translation_memory",
+      "PER-LOCALE. Call once per locale for MODIFIED key groups (group.status === 'modified') before translating. Returns { oldSource, oldTarget, sourceDiff } where oldSource is the previous English value, oldTarget is the existing translation on disk for this locale, and sourceDiff summarises word-level changes between oldSource and newSource. Use oldTarget as the starting point and apply only the changes indicated by sourceDiff — do not retranslate from scratch. Returns all-null values for added keys (no prior translation exists).",
+      { taskId: z.string(), targetLocale: z.string() },
+      async ({ taskId, targetLocale }: { taskId: string; targetLocale: string }) =>
+        wrapResult(await h.translationMemory({ taskId, targetLocale })),
+    ),
   ];
 
   const toolNames = allTools.map((t) => `mcp__localizer__${t.name}`);
