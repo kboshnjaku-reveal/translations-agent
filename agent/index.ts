@@ -81,7 +81,7 @@ Options:
   --no-web-validate           Disable web search validation for ambiguous/legal content
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
-  --model <name>              Override the model (default: gpt-4o for OpenAI, claude-opus-4-7 for Anthropic)
+  --model <name>              Override the model (default: gpt-4o-mini for OpenAI, claude-opus-4-7 for Anthropic)
   --no-html-report            Skip writing the HTML run report (enabled by default)
   --no-resume                 Skip loading a saved checkpoint and start from the beginning.
                               Progress is still saved for future resume unless --dry-run is set.
@@ -112,7 +112,7 @@ ERROR: No API key found.
 
 Set one of the following in your .env file or environment:
 
-  OPENAI_API_KEY=<key>       → uses OpenAI agents SDK  (default model: gpt-4o)
+  OPENAI_API_KEY=<key>       → uses OpenAI agents SDK  (default model: gpt-4o-mini)
   ANTHROPIC_API_KEY=<key>    → uses Anthropic Claude SDK (default model: claude-opus-4-7)
 `);
   process.exit(1);
@@ -121,7 +121,7 @@ Set one of the following in your .env file or environment:
 async function askProviderChoice(): Promise<Provider> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   console.log("\nBoth OPENAI_API_KEY and ANTHROPIC_API_KEY are set.");
-  console.log("  1) OpenAI    (default model: gpt-4o)");
+  console.log("  1) OpenAI    (default model: gpt-4o-mini)");
   console.log("  2) Anthropic (default model: claude-opus-4-7)");
   const answer = await new Promise<string>((resolve) =>
     rl.question("\nWhich provider should be used? Enter 1 or 2: ", resolve),
@@ -493,7 +493,7 @@ async function main() {
     : (msg: string) => process.stdout.write(msg + "\n");
 
   const provider = await detectProvider();
-  const model = cli.model ?? (provider === "openai" ? "gpt-4o" : "claude-opus-4-7");
+  const model = cli.model ?? (provider === "openai" ? "gpt-4o-mini" : "claude-opus-4-7");
 
   info(`translations-agent  [provider: ${provider}, model: ${model}${cli.dryRun ? ", DRY-RUN" : ""}]`);
   info(`Root: ${cli.root}`);
