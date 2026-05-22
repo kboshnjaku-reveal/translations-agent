@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import { scanRepository } from "../agent/repository.js";
 import { detectChangedKeys } from "../agent/git.js";
 import { buildWorkQueue } from "../agent/work-queue.js";
-import { buildGlossary, type LocaleEntries } from "../lib/glossary.js";
 import { buildOpenAITools } from "../agent/tools-openai.js";
 import { buildAnthropicServer } from "../agent/tools-anthropic.js";
 import { buildSystemPrompt } from "../agent/system-prompt.js";
@@ -19,16 +18,6 @@ async function main() {
   }
   const tasks = buildWorkQueue({ bundles, changedByBundle });
 
-  const localeEntries: LocaleEntries[] = [];
-  const seen = new Set<string>();
-  for (const b of bundles)
-    for (const f of [b.sourceFile, ...b.targets]) {
-      if (seen.has(f.absPath)) continue;
-      seen.add(f.absPath);
-      localeEntries.push({ locale: f.locale, entries: f.entries });
-    }
-  const glossary = buildGlossary(localeEntries, bundles[0]!.sourceLocale);
-
   const rulesPath = path.resolve(
     path.dirname(new URL(import.meta.url).pathname),
     "..",
@@ -40,7 +29,6 @@ async function main() {
   const commonDeps = {
     tasks,
     bundles,
-    glossary,
     localeRules,
     webValidationEnabled: false,
     onReport: () => {},

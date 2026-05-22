@@ -2,14 +2,13 @@ import { randomBytes } from "node:crypto";
 
 export type TraceStep =
   | "normalize"
-  | "glossary"
   | "classify"
   | "locale_rules"
   | "validate"
   | "web"
   | "score";
 
-export const REQUIRED_PRE_VALIDATE: TraceStep[] = ["normalize", "glossary", "classify", "locale_rules"];
+export const REQUIRED_PRE_VALIDATE: TraceStep[] = ["normalize", "classify", "locale_rules"];
 
 export type TraceState = {
   taskId: string;

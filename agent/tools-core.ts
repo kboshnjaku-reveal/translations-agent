@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { comparePlaceholders, extractPlaceholders } from "../lib/placeholders.js";
-import { findMatches, type GlossaryEntry } from "../lib/glossary.js";
 import { validateLocale } from "../lib/locale-validator.js";
 import { scoreConfidence } from "../lib/confidence-scorer.js";
 import { TraceRegistry, REQUIRED_PRE_VALIDATE, type TraceStep } from "../lib/trace.js";
@@ -14,7 +13,6 @@ import type { Task, Placement } from "./work-queue.js";
 export type ServerDeps = {
   tasks: Task[];
   bundles: Bundle[];
-  glossary: GlossaryEntry[];
   localeRules: Record<string, unknown>;
   webValidationEnabled: boolean;
   /**
@@ -49,12 +47,6 @@ export type ReportStats = {
   };
 };
 
-export type HtmlGlossaryMatch = {
-  term: string;
-  translation: string;
-  keepEnglish: boolean;
-};
-
 export type HtmlLocaleValidation = {
   valid: boolean;
   score: number;
@@ -78,7 +70,6 @@ export type HtmlLocaleResult = {
   needsReview: boolean;
   failureReason?: string;
   confidence: HtmlConfidence | null;
-  glossaryMatches: HtmlGlossaryMatch[];
   localeValidation: HtmlLocaleValidation | null;
   alternatives: string[];
   webValidationNote: string;
@@ -141,7 +132,6 @@ export type KeyGroupResponse = {
 // ── Handler input types ────────────────────────────────────────────────────────
 
 export type NormalizeInput = { taskId: string; text: string };
-export type GlossaryInput = { taskId: string; text: string; sourceLocale: string; targetLocale: string; traceToken: string };
 export type ClassifyInput = { taskId: string; text: string; traceToken: string };
 export type LocaleRulesInput = { taskId: string; locale: string; placement?: string | null; traceToken: string };
 export type ValidateInput = {
@@ -164,7 +154,6 @@ export type TranslationMemoryInput = { taskId: string; targetLocale: string };
 export type ToolHandlers = {
   nextKeyGroup: () => Promise<string>;
   normalizeText: (input: NormalizeInput) => Promise<string>;
-  searchGlossary: (input: GlossaryInput) => Promise<string>;
   classifyDomain: (input: ClassifyInput) => Promise<string>;
   getLocaleRules: (input: LocaleRulesInput) => Promise<string>;
   validateTranslation: (input: ValidateInput) => Promise<string>;
@@ -214,7 +203,6 @@ function computeSourceDiff(oldSource: string, newSource: string): string {
 
 export function makeHandlers(deps: ServerDeps): ToolHandlers {
   type TaskTelemetry = {
-    glossaryMatches?: HtmlGlossaryMatch[];
     localeValidation?: HtmlLocaleValidation;
     confidence?: HtmlConfidence;
   };
@@ -374,21 +362,6 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       return ok({ ...task.preNormalized, traceToken });
     },
 
-    searchGlossary: async ({ taskId, text, targetLocale, traceToken }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId.");
-      const matches = findMatches(deps.glossary, text, targetLocale);
-      upsertTelemetry(taskId, {
-        glossaryMatches: matches.map((m) => ({
-          term: m.term,
-          translation: m.translation,
-          keepEnglish: m.keepEnglish,
-        })),
-      });
-      const newToken = trace.issue(taskId, "glossary");
-      return ok({ matches, traceToken: newToken, priorToken: traceToken });
-    },
-
     classifyDomain: async ({ taskId, traceToken }) => {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
@@ -525,7 +498,6 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
             needsReview: u.needsReview,
             failureReason: u.failureReason ?? undefined,
             confidence: taskTelemetry?.confidence ?? null,
-            glossaryMatches: taskTelemetry?.glossaryMatches ?? [],
             localeValidation: taskTelemetry?.localeValidation ?? null,
             alternatives: [],
             webValidationNote: "Web validation is evidence-only; results appear in the report but do not affect the confidence score.",

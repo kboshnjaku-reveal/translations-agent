@@ -10,7 +10,6 @@ import { ensureCleanGitState, detectChangedKeys, isGitRepo, getHeadSha } from ".
 import { loadCheckpoint, saveCheckpoint, deleteCheckpoint, isCheckpointValid, digestContents, type Checkpoint } from "../lib/checkpoint.js";
 import { buildWorkQueue } from "./work-queue.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import { buildGlossary, mergeWithSeed, type GlossaryEntry, type LocaleEntries } from "../lib/glossary.js";
 import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
 import { writeHtmlReport } from "./html-report.js";
@@ -29,7 +28,6 @@ type Provider = "openai" | "anthropic";
 
 type Cli = {
   webValidate: boolean;
-  noGlossary: boolean;
   sourceLocale?: string;
   root: string;
   model?: string;
@@ -44,7 +42,6 @@ type Cli = {
 function parseArgs(argv: string[]): Cli {
   const cli: Cli = {
     webValidate: true,
-    noGlossary: false,
     root: process.cwd(),
     help: false,
     dryRun: false,
@@ -57,7 +54,6 @@ function parseArgs(argv: string[]): Cli {
     const a = argv[i];
     if (a === "--help" || a === "-h") cli.help = true;
     else if (a === "--no-web-validate") cli.webValidate = false;
-    else if (a === "--no-glossary") cli.noGlossary = true;
     else if (a === "--source-locale") cli.sourceLocale = argv[++i];
     else if (a === "--root") cli.root = path.resolve(argv[++i] ?? process.cwd());
     else if (a === "--model") cli.model = argv[++i];
@@ -83,7 +79,6 @@ Options:
   --json                      Emit the final report as JSON on stdout. Progress and tool
                               call narration are routed to stderr.
   --no-web-validate           Disable web search validation for ambiguous/legal content
-  --no-glossary               Disable glossary matching (useful for testing raw model output)
   --source-locale <code>      Override source-locale auto-detection
   --root <path>               Operate on a directory other than cwd
   --model <name>              Override the model (default: gpt-4o for OpenAI, claude-opus-4-7 for Anthropic)
@@ -608,28 +603,6 @@ async function main() {
 
   info(`  Work queue: ${tasks.length} task(s) (cartesian product of changes × target locales).`);
 
-  const localeEntries: LocaleEntries[] = [];
-  const seen = new Set<string>();
-  for (const bundle of bundles) {
-    for (const file of [bundle.sourceFile, ...bundle.targets]) {
-      if (seen.has(file.absPath)) continue;
-      seen.add(file.absPath);
-      localeEntries.push({ locale: file.locale, entries: file.entries });
-    }
-  }
-  let glossary: GlossaryEntry[] = [];
-  if (!cli.noGlossary) {
-    const autoBuilt = buildGlossary(localeEntries, bundles[0]!.sourceLocale);
-    const seedPath = path.resolve(__dirname, "..", "data", "glossary-seed.json");
-    const seed = JSON.parse(await fs.readFile(seedPath, "utf8")) as GlossaryEntry[];
-    glossary = mergeWithSeed(autoBuilt, seed);
-    // Count how many auto-built entries actually made it through the merge (not filtered by seed conflicts)
-    const autoBuiltInFinal = glossary.length - seed.length;
-    info(`  Glossary: ${glossary.length} entries (${seed.length} seed + ${autoBuiltInFinal} auto-built after merge, ${autoBuilt.length} auto-built before merge).`);
-  } else {
-    info("  Glossary: disabled (--no-glossary)");
-  }
-
   const localeRulesPath = path.resolve(__dirname, "..", "data", "locale-rules.json");
   const localeRulesRaw = await fs.readFile(localeRulesPath, "utf8");
   const localeRules = JSON.parse(localeRulesRaw) as Record<string, unknown>;
@@ -640,7 +613,6 @@ async function main() {
   const commonDeps = {
     tasks,
     bundles,
-    glossary,
     localeRules,
     webValidationEnabled: cli.webValidate,
     dryRun: cli.dryRun,

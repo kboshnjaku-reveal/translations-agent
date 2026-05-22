@@ -43,10 +43,9 @@ describe("TraceRegistry — issue and verify", () => {
   it("reports all missing steps", () => {
     const reg = new TraceRegistry();
     const normalizeToken = reg.issue("task1", "normalize");
-    // glossary, classify, locale_rules not issued
+    // classify, locale_rules not issued
     const result = reg.verify("task1", [normalizeToken], REQUIRED_PRE_VALIDATE);
     assert.equal(result.ok, false);
-    assert.ok(result.missing.includes("glossary"));
     assert.ok(result.missing.includes("classify"));
     assert.ok(result.missing.includes("locale_rules"));
     assert.ok(!result.missing.includes("normalize"));
@@ -97,7 +96,7 @@ describe("TraceRegistry — reset", () => {
 });
 
 describe("REQUIRED_PRE_VALIDATE constant", () => {
-  it("contains the four required pipeline steps", () => {
-    assert.deepEqual(REQUIRED_PRE_VALIDATE, ["normalize", "glossary", "classify", "locale_rules"]);
+  it("contains the three required pipeline steps", () => {
+    assert.deepEqual(REQUIRED_PRE_VALIDATE, ["normalize", "classify", "locale_rules"]);
   });
 });

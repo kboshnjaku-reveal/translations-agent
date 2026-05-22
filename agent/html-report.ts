@@ -169,13 +169,6 @@ function toAction(locale: HtmlLocaleResult): { key: string; label: string } {
 function renderLocale(locale: HtmlLocaleResult): string {
   const action = toAction(locale);
   const breakdown = locale.confidence?.components;
-  const glossaryHtml =
-    locale.glossaryMatches.length > 0
-      ? `<ul>${locale.glossaryMatches
-          .map((m) => `<li><code>${escapeHtml(m.term)}</code> → <strong>${escapeHtml(m.translation)}</strong></li>`)
-          .join("")}</ul>`
-      : `<div class="small">No glossary matches captured for this locale.</div>`;
-
   const issuesHtml =
     locale.localeValidation && locale.localeValidation.issues.length > 0
       ? `<ul>${locale.localeValidation.issues.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`
@@ -241,11 +234,6 @@ function renderLocale(locale: HtmlLocaleResult): string {
         <div class="box">Locale<strong>${toPercent(breakdown?.locale ?? null)}</strong></div>
         <div class="box">Structure<strong>${toPercent(breakdown?.structure ?? null)}</strong></div>
       </div>
-    </div>
-
-    <div>
-      <strong>Glossary Term Mappings</strong>
-      ${glossaryHtml}
     </div>
 
     <div>

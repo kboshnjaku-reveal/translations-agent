@@ -33,7 +33,7 @@ export function buildAnthropicServer(deps: ServerDeps) {
   const allTools = [
     tool(
       "next_key_group",
-      "Dequeue the next key group from the work queue. A group contains one source key and every target locale that needs it translated. Returns {group, remaining} where group is null when the queue is drained. Process all locales in the group together: shared steps (normalize_text, classify_domain) run once per group; per-locale steps (search_glossary, get_locale_rules, validate_translation, score_confidence) run once per locale; commit_bundle runs once per group with batched updates.",
+      "Dequeue the next key group from the work queue. A group contains one source key and every target locale that needs it translated. Returns {group, remaining} where group is null when the queue is drained. Process all locales in the group together: shared steps (normalize_text, classify_domain) run once per group; per-locale steps (get_locale_rules, validate_translation, score_confidence) run once per locale; commit_bundle runs once per group with batched updates.",
       {},
       async () => wrapResult(await h.nextKeyGroup()),
     ),
@@ -44,31 +44,6 @@ export function buildAnthropicServer(deps: ServerDeps) {
       { taskId: z.string(), text: z.string() },
       async ({ taskId, text }: { taskId: string; text: string }) =>
         wrapResult(await h.normalizeText({ taskId, text })),
-    ),
-
-    tool(
-      "search_glossary",
-      "PER-LOCALE. Call once for each locale in the group. Looks up curated glossary terms for the given target locale. Returns matches with translations and keepEnglish flag.",
-      {
-        taskId: z.string(),
-        text: z.string(),
-        sourceLocale: z.string(),
-        targetLocale: z.string(),
-        traceToken: z.string(),
-      },
-      async ({
-        taskId,
-        text,
-        sourceLocale,
-        targetLocale,
-        traceToken,
-      }: {
-        taskId: string;
-        text: string;
-        sourceLocale: string;
-        targetLocale: string;
-        traceToken: string;
-      }) => wrapResult(await h.searchGlossary({ taskId, text, sourceLocale, targetLocale, traceToken })),
     ),
 
     tool(

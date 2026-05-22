@@ -8,14 +8,6 @@ export type { ServerDeps, ReportStats };
 
 const normalizeParams = z.object({ taskId: z.string(), text: z.string() });
 
-const glossaryParams = z.object({
-  taskId: z.string(),
-  text: z.string(),
-  sourceLocale: z.string(),
-  targetLocale: z.string(),
-  traceToken: z.string(),
-});
-
 const classifyParams = z.object({ taskId: z.string(), text: z.string(), traceToken: z.string() });
 
 const localeRulesParams = z.object({
@@ -77,7 +69,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "next_key_group",
       description:
-        "Dequeue the next key group from the work queue. A group contains one source key and every target locale that needs it translated. Returns {group, remaining} where group is null when the queue is drained. Process all locales in the group together: shared steps (normalize_text, classify_domain) run once per group; per-locale steps (search_glossary, get_locale_rules, validate_translation, score_confidence) run once per locale; commit_bundle runs once per group with batched updates.",
+        "Dequeue the next key group from the work queue. A group contains one source key and every target locale that needs it translated. Returns {group, remaining} where group is null when the queue is drained. Process all locales in the group together: shared steps (normalize_text, classify_domain) run once per group; per-locale steps (get_locale_rules, validate_translation, score_confidence) run once per locale; commit_bundle runs once per group with batched updates.",
       parameters: z.object({}),
       execute: async () => h.nextKeyGroup(),
     }),
@@ -88,14 +80,6 @@ export function buildOpenAITools(deps: ServerDeps) {
         "GROUP-SHARED. Call ONCE per key group with any member's taskId. Collapses whitespace and masks placeholders ({{x}}, {x}, ${x}, %s, %d) as __PH0__..__PHn__. The returned traceToken is valid for every locale in the group.",
       parameters: normalizeParams,
       execute: async (input: z.infer<typeof normalizeParams>) => h.normalizeText(input),
-    }),
-
-    tool({
-      name: "search_glossary",
-      description:
-        "PER-LOCALE. Call once for each locale in the group. Looks up curated glossary terms for the given target locale. Returns matches with translations and keepEnglish flag.",
-      parameters: glossaryParams,
-      execute: async (input: z.infer<typeof glossaryParams>) => h.searchGlossary(input),
     }),
 
     tool({
