@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { comparePlaceholders, extractPlaceholders } from "../lib/placeholders.js";
+import { comparePlaceholders } from "../lib/placeholders.js";
 import { validateLocale } from "../lib/locale-validator.js";
 import { scoreConfidence } from "../lib/confidence-scorer.js";
-import { TraceRegistry, REQUIRED_PRE_VALIDATE, type TraceStep } from "../lib/trace.js";
 import { commitBundleUpdates, type Update } from "./locale-writer.js";
 import { getDeep } from "../lib/flatten-json.js";
 import type { Bundle } from "./repository.js";
@@ -118,61 +117,43 @@ export type HtmlReportGroup = {
 
 // ── Group response shape ───────────────────────────────────────────────────────
 
+export type EnrichedLocale = {
+  taskId: string;
+  targetLocale: string;
+  rules: Record<string, unknown>;
+  placementConstraint: unknown | null;
+  tm: { oldSource: string | null; oldTarget: string | null; sourceDiff: string | null };
+};
+
 export type KeyGroupResponse = {
   groupId: string;
   bundleId: string;
   sourceLocale: string;
   keyPath: string;
   newValue: string;
+  normalized: string;
+  placeholders: Array<{ token: string; original: string }>;
+  domain: string;
   status: "added" | "modified";
   placement: Placement;
-  locales: Array<{ taskId: string; targetLocale: string }>;
+  locales: EnrichedLocale[];
 };
 
 // ── Handler input types ────────────────────────────────────────────────────────
 
-export type NormalizeInput = { taskId: string; text: string };
-export type ClassifyInput = { taskId: string; text: string; traceToken: string };
-export type LocaleRulesInput = { taskId: string; locale: string; placement?: string | null; traceToken: string };
-export type ValidateInput = {
-  taskId: string;
-  source: string;
-  translation: string;
-  locale: string;
-  placeholders: Array<{ token: string; original: string }>;
-  traceTokens: string[];
-};
-export type ScoreInput = { taskId: string; localeScore: number; structureScore: number };
 export type CommitBundleInput = {
   bundleId: string;
   updates: Array<{ targetLocale: string; keyPath: string; value: string; needsReview: boolean; failureReason?: string | null }>;
 };
-export type EmitReportInput = { stats: string };
-export type TranslationMemoryInput = { taskId: string; targetLocale: string };
 
 export type ToolHandlers = {
   nextKeyGroup: () => Promise<string>;
-  normalizeText: (input: NormalizeInput) => Promise<string>;
-  classifyDomain: (input: ClassifyInput) => Promise<string>;
-  getLocaleRules: (input: LocaleRulesInput) => Promise<string>;
-  validateTranslation: (input: ValidateInput) => Promise<string>;
-  scoreConfidence: (input: ScoreInput) => Promise<string>;
   commitBundle: (input: CommitBundleInput) => Promise<string>;
-  emitReport: (input: EmitReportInput) => Promise<string>;
-  translationMemory: (input: TranslationMemoryInput) => Promise<string>;
+  emitReport: () => Promise<string>;
 };
 
-// ── Translation memory helpers ─────────────────────────────────────────────────
+// ── Translation memory helper ──────────────────────────────────────────────────
 
-/**
- * Produces a compact, human-readable description of what changed between two
- * source strings at the word level. Used by the translation_memory tool to give
- * the agent a concise edit signal rather than two raw blobs to compare.
- *
- * The diff is intentionally simple (set-based, not positional) — sufficient for
- * the agent to understand which words were added or removed without needing a
- * library dependency.
- */
 function computeSourceDiff(oldSource: string, newSource: string): string {
   const tokenise = (s: string) =>
     s
@@ -209,7 +190,6 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     locales: Map<string, HtmlLocaleResult>;
   };
 
-  const trace = new TraceRegistry();
   const telemetry = new Map<string, TaskTelemetry>();
   const taskIndex = new Map<string, Task>();
   for (const task of deps.tasks) {
@@ -301,17 +281,10 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     reportEmitted: false,
   };
   const remaining = [...deps.tasks];
-  const issuedTasks = new Map<string, Task>();
-  // taskId → all member taskIds in its key group. Used so that shared steps
-  // (normalize_text, classify_domain) fan their trace token out to every
-  // sibling locale, satisfying validate_translation's trace check per-locale.
-  const groupMembership = new Map<string, string[]>();
 
   const ok = (payload: unknown) => JSON.stringify(payload);
   const err = (message: string, extra: Record<string, unknown> = {}) =>
     JSON.stringify({ error: message, ...extra });
-  const requireTask = (taskId: string): Task | null => issuedTasks.get(taskId) ?? null;
-  const groupOf = (taskId: string): string[] => groupMembership.get(taskId) ?? [taskId];
 
   return {
     nextKeyGroup: async () => {
@@ -328,128 +301,59 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       remaining.length = 0;
       remaining.push(...others);
 
-      const memberTaskIds = members.map((m) => m.taskId);
-      for (const t of members) {
-        issuedTasks.set(t.taskId, t);
-        trace.reset(t.taskId);
-        groupMembership.set(t.taskId, memberTaskIds);
-      }
-
       const groupId = randomBytes(8).toString("hex");
+      const bundle = deps.bundles.find((b) => b.id === first.bundleId);
+      const placementSection = (deps.localeRules.placement ?? {}) as Record<string, unknown>;
+      const placementRule =
+        first.placement !== "unspecified" ? placementSection[first.placement] : undefined;
+
+      const locales: EnrichedLocale[] = members.map((m) => {
+        const base = m.targetLocale.split("-")[0] ?? m.targetLocale;
+        const rules = ((deps.localeRules[base] ?? deps.localeRules[m.targetLocale]) ?? {
+          formality: "Apply formal register appropriate for product UI.",
+          spelling: "Use standard orthography for this locale.",
+          antiPatterns: [],
+          structureRules: ["Preserve placeholders exactly.", "Preserve ICU plural/select syntax."],
+        }) as Record<string, unknown>;
+
+        let tm: EnrichedLocale["tm"] = { oldSource: null, oldTarget: null, sourceDiff: null };
+        if (m.status === "modified" && m.oldValue !== null) {
+          const targetFile = bundle?.targets.find((t) => t.locale === m.targetLocale);
+          const rawTarget = targetFile ? getDeep(targetFile.json, m.keyPath) : null;
+          tm = {
+            oldSource: m.oldValue,
+            oldTarget: typeof rawTarget === "string" ? rawTarget : null,
+            sourceDiff: computeSourceDiff(m.oldValue, m.newValue),
+          };
+        }
+
+        return {
+          taskId: m.taskId,
+          targetLocale: m.targetLocale,
+          rules,
+          placementConstraint: placementRule ?? null,
+          tm,
+        };
+      });
+
       const group: KeyGroupResponse = {
         groupId,
         bundleId: first.bundleId,
         sourceLocale: first.sourceLocale,
         keyPath: first.keyPath,
         newValue: first.newValue,
+        normalized: first.preNormalized.normalized,
+        placeholders: first.preNormalized.placeholders,
+        domain: first.preClassified.domain,
         status: first.status,
         placement: first.placement,
-        locales: members.map((m) => ({ taskId: m.taskId, targetLocale: m.targetLocale })),
+        locales,
       };
 
       deps.log(
         `[next_key_group] ${groupId} → ${first.bundleId}/${first.keyPath} × ${members.length} locale(s)`,
       );
       return ok({ group, remaining: others.length });
-    },
-
-    normalizeText: async ({ taskId }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId. Call next_key_group first.");
-      const traceToken = trace.issueForMany(groupOf(taskId), "normalize");
-      return ok({ ...task.preNormalized, traceToken });
-    },
-
-    classifyDomain: async ({ taskId, traceToken }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId.");
-      const newToken = trace.issueForMany(groupOf(taskId), "classify");
-      return ok({ ...task.preClassified, traceToken: newToken, priorToken: traceToken });
-    },
-
-    getLocaleRules: async ({ taskId, locale, placement, traceToken }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId.");
-      const base = locale.split("-")[0] ?? locale;
-      const localeRules = (deps.localeRules[base] ?? deps.localeRules[locale]) as
-        | Record<string, unknown>
-        | undefined;
-      const placementSection = (deps.localeRules.placement ?? {}) as Record<string, unknown>;
-      const placementRule =
-        placement && placement !== "unspecified" ? placementSection[placement] : undefined;
-      const newToken = trace.issue(taskId, "locale_rules");
-      return ok({
-        locale,
-        rules: localeRules ?? {
-          formality: "Apply formal register appropriate for product UI.",
-          spelling: "Use standard orthography for this locale.",
-          antiPatterns: [],
-          structureRules: ["Preserve placeholders exactly.", "Preserve ICU plural/select syntax."],
-        },
-        placementConstraint: placementRule ?? null,
-        traceToken: newToken,
-        priorToken: traceToken,
-      });
-    },
-
-    validateTranslation: async ({ taskId, source, translation, locale, placeholders, traceTokens }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId.");
-
-      const traceCheck = trace.verify(taskId, traceTokens, REQUIRED_PRE_VALIDATE as TraceStep[]);
-      const issues: Array<{ code: string; expected?: string; actual?: string }> = [];
-
-      if (!traceCheck.ok) {
-        for (const missing of traceCheck.missing) {
-          issues.push({ code: "MISSING_TRACE_TOKEN", expected: missing });
-        }
-      }
-
-      const structureCheck = comparePlaceholders(source, translation);
-      for (const m of structureCheck.missing) issues.push({ code: "PLACEHOLDER_MISSING", expected: m });
-      for (const e of structureCheck.extra) issues.push({ code: "PLACEHOLDER_EXTRA", actual: e });
-      if (structureCheck.reordered) issues.push({ code: "PLACEHOLDER_REORDERED" });
-
-      const localeResult = validateLocale(translation, locale);
-      for (const li of localeResult.issues) issues.push(li);
-
-      const sourceExtracted = extractPlaceholders(source);
-      const declared = placeholders.map((p) => p.original).sort();
-      const found = [...sourceExtracted].sort();
-      if (declared.join("|") !== found.join("|")) {
-        issues.push({ code: "STRUCTURE_DIVERGED", expected: found.join(","), actual: declared.join(",") });
-      }
-
-      const structureScore = structureCheck.equal && !structureCheck.reordered ? 1 : 0;
-      const localeScore = localeResult.score;
-      const valid = issues.length === 0;
-
-      upsertTelemetry(taskId, {
-        localeValidation: {
-          valid,
-          score: localeScore,
-          issues: issues.map((issue) => issue.code),
-        },
-      });
-
-      const newToken = trace.issue(taskId, "validate");
-      return ok({ valid, issues, structureScore, localeScore, traceToken: newToken });
-    },
-
-    scoreConfidence: async ({ taskId, localeScore, structureScore }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId.");
-      const result = scoreConfidence({ localeScore, structureScore });
-      upsertTelemetry(taskId, {
-        confidence: {
-          total: result.total,
-          tier: result.tier,
-          webScore: null,
-          components: result.components,
-        },
-      });
-      trace.issue(taskId, "score");
-      return ok(result);
     },
 
     commitBundle: async ({ bundleId, updates }) => {
@@ -459,13 +363,48 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       const sourceByKey = new Map<string, string>();
       for (const entry of bundle.sourceFile.entries) sourceByKey.set(entry.keyPath, entry.value);
 
+      // Server-side validation + scoring; override needsReview when confidence is low
+      const scoredUpdates = updates.map((u) => {
+        const source = sourceByKey.get(u.keyPath) ?? "";
+        const structureCheck = comparePlaceholders(source, u.value);
+        const localeResult = validateLocale(u.value, u.targetLocale);
+        const structureScore = structureCheck.equal && !structureCheck.reordered ? 1 : 0;
+        const localeScore = localeResult.score;
+        const scored = scoreConfidence({ localeScore, structureScore });
+        const serverForcesReview = scored.tier === "escalate" || scored.tier === "mandatory";
+
+        const allIssues: Array<{ code: string }> = [...localeResult.issues];
+        structureCheck.missing.forEach(() => allIssues.push({ code: "PLACEHOLDER_MISSING" }));
+        structureCheck.extra.forEach(() => allIssues.push({ code: "PLACEHOLDER_EXTRA" }));
+        if (structureCheck.reordered) allIssues.push({ code: "PLACEHOLDER_REORDERED" });
+
+        const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
+        if (task) {
+          upsertTelemetry(task.taskId, {
+            localeValidation: {
+              valid: allIssues.length === 0,
+              score: localeScore,
+              issues: allIssues.map((i) => i.code),
+            },
+            confidence: {
+              total: scored.total,
+              tier: scored.tier,
+              webScore: null,
+              components: scored.components,
+            },
+          });
+        }
+
+        return { ...u, needsReview: u.needsReview || serverForcesReview };
+      });
+
       const result = await commitBundleUpdates(
         (locale) => {
           const file = bundle.targets.find((t) => t.locale === locale);
           if (!file) return undefined;
           return { absPath: file.absPath, sourceValue: undefined };
         },
-        updates as Update[],
+        scoredUpdates as Update[],
         {
           sourceByKey,
           sourceLocale: bundle.sourceLocale,
@@ -475,7 +414,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       );
 
       for (const w of result.written) state.updatedFiles.add(`${bundleId}/${w}`);
-      for (const u of updates) {
+      for (const u of scoredUpdates) {
         const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
         if (task) {
           const group = ensureGroup(task);
@@ -543,7 +482,6 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
             .sort((a, b) => a.locale.localeCompare(b.locale))
             .map((localeResult) => ({
               ...localeResult,
-              // Keep an explicit action string for simple badge rendering.
               confidence: localeResult.confidence
                 ? {
                     ...localeResult.confidence,
@@ -582,30 +520,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       };
 
       deps.onReport(finalStats);
-      return ok({ ok: true, summary: finalStats });
-    },
-
-    translationMemory: async ({ taskId, targetLocale }) => {
-      const task = requireTask(taskId);
-      if (!task) return err("Unknown taskId. Call next_key_group first.");
-
-      // For added keys there is no prior translation to consult.
-      if (task.status === "added" || task.oldValue === null) {
-        return ok({ oldSource: null, oldTarget: null, sourceDiff: null });
-      }
-
-      // Look up the current on-disk translation for this key in the target locale.
-      const bundle = deps.bundles.find((b) => b.id === task.bundleId);
-      const targetFile = bundle?.targets.find((t) => t.locale === targetLocale);
-      const oldTarget = targetFile ? (getDeep(targetFile.json, task.keyPath) ?? null) : null;
-
-      const sourceDiff = computeSourceDiff(task.oldValue, task.newValue);
-
-      return ok({
-        oldSource: task.oldValue,
-        oldTarget,
-        sourceDiff,
-      });
+      return ok({ ok: true });
     },
   };
 }
