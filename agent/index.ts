@@ -4,7 +4,6 @@ import readline from "node:readline";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
 import { scanRepository } from "./repository.js";
 import { ensureCleanGitState, detectChangedKeys, isGitRepo, getHeadSha } from "./git.js";
 import { loadCheckpoint, saveCheckpoint, deleteCheckpoint, isCheckpointValid, digestContents, type Checkpoint } from "../lib/checkpoint.js";
@@ -14,6 +13,7 @@ import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
 import { writeHtmlReport } from "./html-report.js";
 import type { HtmlWebSearchEvent, ReportStats } from "./tools-core.js";
+import { runBatchWebSearch } from "./web-search-batch.js";
 
 type TokenUsage = { inputTokens: number; outputTokens: number };
 
@@ -161,90 +161,9 @@ async function runOpenAI(opts: {
   fallbackWebSearchEvents: HtmlWebSearchEvent[];
   quiet: boolean;
 }): Promise<TokenUsage> {
-  const { Agent, run, tool } = await import("@openai/agents");
+  const { Agent, run } = await import("@openai/agents");
 
-  const webSearchTool = tool({
-    name: "WebSearch",
-    description: "Search the web for authoritative sources on a translation term or legal phrase. Always pass the locale taskId and targetLocale to support run reporting.",
-    parameters: z.object({
-      query: z.string(),
-      taskId: z.string().nullable().optional(),
-      targetLocale: z.string().nullable().optional(),
-    }),
-    execute: async (input: { query: string; taskId?: string | null; targetLocale?: string | null }) => {
-      // Build the event upfront so we always push it — even on failure — so the
-      // query appears in the HTML report regardless of whether the search succeeded.
-      const event: HtmlWebSearchEvent = {
-        query: input.query,
-        targetLocale: input.targetLocale ?? undefined,
-        summary: "",
-        sources: [],
-      };
-
-      try {
-        const { default: OpenAI } = await import("openai");
-        const openai = new OpenAI();
-
-        // gpt-4o-search-preview via Chat Completions is the reliable path: it
-        // performs web search natively and returns URL citations in
-        // message.annotations as {type:"url_citation", url_citation:{url,title}}.
-        const response = await (openai.chat.completions as any).create({
-          model: "gpt-4o-search-preview",
-          web_search_options: {},
-          messages: [{ role: "user", content: input.query }],
-        });
-
-        const choice = response.choices?.[0];
-        const text: string = typeof choice?.message?.content === "string" ? choice.message.content : "";
-        event.summary = text.trim().slice(0, 1000);
-
-        // Extract URL citations from annotations.
-        // The SDK returns: {type:"url_citation", url_citation:{url,title,...}}
-        // Older SDK versions may also surface {type:"url_citation", url, title} directly.
-        const annotations: any[] = Array.isArray(choice?.message?.annotations)
-          ? choice.message.annotations
-          : [];
-        for (const ann of annotations) {
-          if (ann.type !== "url_citation") continue;
-          const url: string = ann.url_citation?.url ?? ann.url ?? "";
-          const title: string | undefined = ann.url_citation?.title ?? ann.title;
-          if (url && !event.sources.some((s) => s.url === url)) {
-            event.sources.push({ url, title: typeof title === "string" ? title : undefined });
-          }
-        }
-
-        // Fallback: pull any bare https:// URLs out of the response text.
-        if (event.sources.length === 0) {
-          const urlMatches = text.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? [];
-          for (const raw of urlMatches) {
-            const url = raw.replace(/[.,;:]+$/, "");
-            if (url && !event.sources.some((s) => s.url === url)) event.sources.push({ url });
-          }
-        }
-      } catch (e) {
-        event.summary = "(web search failed)";
-        process.stderr.write(`[WebSearch] ${(e as Error).message ?? String(e)}\n`);
-      }
-
-      if (input.taskId) {
-        const existing = opts.webSearchByTaskId.get(input.taskId) ?? [];
-        existing.push(event);
-        opts.webSearchByTaskId.set(input.taskId, existing);
-      } else {
-        opts.fallbackWebSearchEvents.push(event);
-      }
-
-      if (event.sources.length > 0) {
-        return `${event.summary}\n\nSources: ${event.sources.map((s) => s.url).join(", ")}`;
-      }
-      return event.summary || "(web search unavailable — treat webScore as 0.6 for a single uncertain source)";
-    },
-  });
-
-  const allTools = [
-    ...opts.tools,
-    ...(opts.webValidate ? [webSearchTool] : []),
-  ];
+  const allTools = [...opts.tools];
 
   const agent = new Agent({
     name: "Translations Agent",
@@ -312,9 +231,6 @@ async function runAnthropic(opts: {
 }): Promise<TokenUsage> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
-  const builtInTools: string[] = opts.webValidate ? ["WebSearch"] : [];
-
-  const allowedTools = [...opts.toolNames, ...builtInTools];
   const maxTurns = Math.max(80, opts.taskCount * 12);
 
   const q = query({
@@ -324,8 +240,7 @@ async function runAnthropic(opts: {
       model: opts.model,
       systemPrompt: opts.systemPrompt,
       mcpServers: { localizer: opts.server },
-      allowedTools,
-      tools: builtInTools,
+      allowedTools: opts.toolNames,
       maxTurns,
     },
   });
@@ -334,79 +249,14 @@ async function runAnthropic(opts: {
 
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-  // Maps tool_use_id → { query, taskId, targetLocale } for in-flight WebSearch calls.
-  const pendingWebSearches = new Map<string, { query: string; taskId?: string; targetLocale?: string }>();
-
   for await (const message of q) {
     if (message.type === "assistant") {
-      const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string; id?: string; input?: Record<string, unknown> }> }).content;
+      const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) {
           out(block.text);
         } else if (block.type === "tool_use" && block.name) {
           out(`  → [tool] ${block.name}\n`);
-          // Capture WebSearch calls so we can match their results when the tool_result arrives.
-          if ((block.name === "WebSearch" || block.name === "web_search") && block.id) {
-            const input = block.input ?? {};
-            pendingWebSearches.set(block.id, {
-              query: String(input.query ?? ""),
-              taskId: typeof input.taskId === "string" ? input.taskId : undefined,
-              targetLocale: typeof input.targetLocale === "string" ? input.targetLocale : undefined,
-            });
-          }
-        }
-      }
-    } else if (message.type === "user") {
-      // Tool results arrive as user messages. Match them to pending WebSearch calls and capture telemetry.
-      const msgContent = (message.message as any).content;
-      const blocks: any[] = Array.isArray(msgContent) ? msgContent : [];
-      for (const block of blocks) {
-        if (block.type !== "tool_result") continue;
-        const pending = pendingWebSearches.get(block.tool_use_id);
-        if (!pending) continue;
-        pendingWebSearches.delete(block.tool_use_id);
-
-        // Extract text from result content (may be a string or an array of content blocks).
-        const resultContent = block.content;
-        const rawText: string = Array.isArray(resultContent)
-          ? resultContent.filter((c: any) => c.type === "text").map((c: any) => String(c.text ?? "")).join(" ")
-          : typeof resultContent === "string" ? resultContent : "";
-        const summary = rawText.trim().slice(0, 1000);
-
-        const sources: Array<{ url: string; title?: string }> = [];
-        // Extract URLs from text content.
-        const urlMatches = rawText.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? [];
-        for (const raw of urlMatches) {
-          const url = raw.replace(/[.,;:]+$/, "");
-          if (url && !sources.some((s) => s.url === url)) sources.push({ url });
-        }
-        // Also check the SDK-provided structured tool_use_result field.
-        const toolResult = (message as any).tool_use_result;
-        if (toolResult && typeof toolResult === "object") {
-          const srcs: any[] = Array.isArray((toolResult as any).sources)
-            ? (toolResult as any).sources
-            : Array.isArray((toolResult as any).results) ? (toolResult as any).results : [];
-          for (const src of srcs) {
-            const url = typeof src?.url === "string" ? src.url : typeof src?.link === "string" ? src.link : "";
-            if (url && !sources.some((s) => s.url === url)) {
-              sources.push({ url, title: typeof src?.title === "string" ? src.title : undefined });
-            }
-          }
-        }
-
-        const event: HtmlWebSearchEvent = {
-          query: pending.query,
-          targetLocale: pending.targetLocale,
-          summary,
-          sources,
-        };
-
-        if (pending.taskId) {
-          const existing = opts.webSearchByTaskId.get(pending.taskId) ?? [];
-          existing.push(event);
-          opts.webSearchByTaskId.set(pending.taskId, existing);
-        } else {
-          opts.fallbackWebSearchEvents.push(event);
         }
       }
     } else if (message.type === "result") {
@@ -619,6 +469,11 @@ async function main() {
     onReport: (s: ReportStats) => { finalReport = s; },
     webSearchByTaskId,
     fallbackWebSearchEvents,
+    webSearcher: cli.webValidate
+      ? async (queries: Array<{ taskId: string; targetLocale: string; query: string }>) => {
+          await runBatchWebSearch(queries, webSearchByTaskId);
+        }
+      : undefined,
     // Route MCP handler logs through `info` so they respect --json mode.
     log: (msg: string) => info(`  ${msg}`),
     onGroupCommitted: checkpoint
