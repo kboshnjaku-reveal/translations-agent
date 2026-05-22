@@ -5,7 +5,7 @@ import { detectChangedKeys } from "../agent/git.js";
 import { buildWorkQueue } from "../agent/work-queue.js";
 import { buildOpenAITools } from "../agent/tools-openai.js";
 import { buildAnthropicServer } from "../agent/tools-anthropic.js";
-import { buildSystemPrompt } from "../agent/system-prompt.js";
+import { buildGroupSystemPrompt } from "../agent/system-prompt.js";
 
 const root = path.resolve(process.argv[2] ?? "fixtures/sample-repo");
 const provider = (process.argv[3] ?? "openai") as "openai" | "anthropic";
@@ -50,25 +50,7 @@ async function main() {
     for (const n of toolNames) console.log(`  ${n}`);
   }
 
-  const groupMap = new Map<string, { bundleId: string; keyPath: string; placement: string; targetLocales: string[] }>();
-  for (const t of tasks) {
-    const key = `${t.bundleId}::${t.keyPath}`;
-    let entry = groupMap.get(key);
-    if (!entry) {
-      entry = { bundleId: t.bundleId, keyPath: t.keyPath, placement: t.placement, targetLocales: [] };
-      groupMap.set(key, entry);
-    }
-    entry.targetLocales.push(t.targetLocale);
-  }
-
-  const prompt = await buildSystemPrompt({
-    bundleCount: bundles.length,
-    taskCount: tasks.length,
-    groupCount: groupMap.size,
-    queuePreview: [...groupMap.values()].slice(0, 5),
-    webValidationEnabled: false,
-    toolNames,
-  });
+  const prompt = await buildGroupSystemPrompt({ webValidationEnabled: false });
   console.log(`\nSystem prompt: ${prompt.length} chars, ~${Math.round(prompt.length / 4)} tokens`);
   console.log(`\n----- PROMPT PREVIEW (first 1200 chars) -----`);
   console.log(prompt.slice(0, 1200));

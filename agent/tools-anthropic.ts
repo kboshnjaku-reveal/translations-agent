@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { makeHandlers, type ServerDeps, type ReportStats } from "./tools-core.js";
+import { makeHandlers, type ServerDeps, type ReportStats, type ToolHandlers } from "./tools-core.js";
 
 export type { ServerDeps, ReportStats };
 
@@ -28,7 +28,7 @@ function wrapResult(jsonStr: string): AnthropicResult {
 // ── Tool builder ───────────────────────────────────────────────────────────────
 
 export function buildAnthropicServer(deps: ServerDeps) {
-  const h = makeHandlers(deps);
+  const h: ToolHandlers = makeHandlers(deps);
 
   const allTools = [
     tool(
@@ -84,5 +84,5 @@ export function buildAnthropicServer(deps: ServerDeps) {
     tools: allTools,
   });
 
-  return { server, toolNames };
+  return { server, toolNames, handlers: h };
 }
