@@ -8,7 +8,7 @@ import { scanRepository } from "./repository.js";
 import { ensureCleanGitState, detectChangedKeys, isGitRepo, getHeadSha } from "./git.js";
 import { loadCheckpoint, saveCheckpoint, deleteCheckpoint, isCheckpointValid, digestContents, type Checkpoint } from "../lib/checkpoint.js";
 import { buildWorkQueue } from "./work-queue.js";
-import { buildSystemPrompt } from "./system-prompt.js";
+import { buildGroupSystemPrompt } from "./system-prompt.js";
 import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
 import { writeHtmlReport } from "./html-report.js";
@@ -148,38 +148,27 @@ async function askPermission(): Promise<boolean> {
   return answer.trim().toLowerCase() === "y" || answer.trim().toLowerCase() === "yes";
 }
 
-// ── OpenAI execution path ──────────────────────────────────────────────────────
+// ── OpenAI per-group execution ─────────────────────────────────────────────────
 
-async function runOpenAI(opts: {
+async function runOpenAIGroup(opts: {
   model: string;
   systemPrompt: string;
-  root: string;
-  webValidate: boolean;
-  taskCount: number;
-  tools: import("@openai/agents").Tool[];
-  webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
-  fallbackWebSearchEvents: HtmlWebSearchEvent[];
+  group: object;
+  commitTool: import("@openai/agents").Tool;
   quiet: boolean;
 }): Promise<TokenUsage> {
   const { Agent, run } = await import("@openai/agents");
-
-  const allTools = [...opts.tools];
 
   const agent = new Agent({
     name: "Translations Agent",
     instructions: opts.systemPrompt,
     model: opts.model,
-    tools: allTools,
+    tools: [opts.commitTool],
   });
 
-  const maxTurns = Math.max(80, opts.taskCount * 12);
-  const streamedResult = await run(agent, "Begin. Call next_task() to start.", {
-    stream: true,
-    maxTurns,
-  });
+  const prompt = `Translate this group:\n\n${JSON.stringify(opts.group, null, 2)}`;
+  const streamedResult = await run(agent, prompt, { stream: true, maxTurns: 5 });
 
-  // In JSON mode, suppress all model narration and tool-call traces so stdout
-  // stays a clean JSON document. The final report is the only stdout content.
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
 
   for await (const event of streamedResult) {
@@ -191,22 +180,12 @@ async function runOpenAI(opts: {
       } else if (item.type === "message_output_item") {
         const content = (item.rawItem as { content?: Array<{ type: string; text?: string }> }).content ?? [];
         for (const block of content) {
-          if (block.type === "output_text" && block.text) {
-            out(block.text);
-          }
+          if (block.type === "output_text" && block.text) out(block.text);
         }
       }
     }
   }
 
-  const finalOutput = streamedResult.finalOutput;
-  if (finalOutput && typeof finalOutput === "string" && finalOutput.trim()) {
-    out(finalOutput + "\n");
-  } else {
-    out("\n");
-  }
-
-  // rawResponses accumulates one ModelResponse per agent turn, each with camelCase usage fields.
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
   for (const r of (streamedResult as any).rawResponses ?? []) {
     usage.inputTokens += r.usage?.inputTokens ?? 0;
@@ -215,59 +194,47 @@ async function runOpenAI(opts: {
   return usage;
 }
 
-// ── Anthropic execution path ───────────────────────────────────────────────────
+// ── Anthropic per-group execution ──────────────────────────────────────────────
 
-async function runAnthropic(opts: {
+async function runAnthropicGroup(opts: {
   model: string;
   systemPrompt: string;
-  root: string;
-  webValidate: boolean;
-  taskCount: number;
+  group: object;
   server: import("@anthropic-ai/claude-agent-sdk").McpSdkServerConfigWithInstance;
-  toolNames: string[];
-  webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
-  fallbackWebSearchEvents: HtmlWebSearchEvent[];
+  root: string;
   quiet: boolean;
 }): Promise<TokenUsage> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
-  const maxTurns = Math.max(80, opts.taskCount * 12);
+  const prompt = `Translate this group:\n\n${JSON.stringify(opts.group, null, 2)}`;
 
   const q = query({
-    prompt: "Begin. Call next_task() to start.",
+    prompt,
     options: {
       cwd: opts.root,
       model: opts.model,
       systemPrompt: opts.systemPrompt,
       mcpServers: { localizer: opts.server },
-      allowedTools: opts.toolNames,
-      maxTurns,
+      allowedTools: ["mcp__localizer__commit_bundle"],
+      maxTurns: 5,
     },
   });
 
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
-
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   for await (const message of q) {
     if (message.type === "assistant") {
       const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
       for (const block of blocks) {
-        if (block.type === "text" && block.text) {
-          out(block.text);
-        } else if (block.type === "tool_use" && block.name) {
-          out(`  → [tool] ${block.name}\n`);
-        }
+        if (block.type === "text" && block.text) out(block.text);
+        else if (block.type === "tool_use" && block.name) out(`  → [tool] ${block.name}\n`);
       }
     } else if (message.type === "result") {
-      // result message carries aggregate camelCase usage for the entire run.
       const r = message as any;
       usage.inputTokens = r.usage?.inputTokens ?? usage.inputTokens;
       usage.outputTokens = r.usage?.outputTokens ?? usage.outputTokens;
-      if (message.subtype === "success") {
-        if (!opts.quiet) console.log("\n");
-      } else {
-        // Errors always go to stderr regardless of mode.
+      if (message.subtype !== "success") {
         console.error(`\nAgent ended with: ${message.subtype}`);
       }
       break;
@@ -498,34 +465,39 @@ async function main() {
     entry.targetLocales.push(t.targetLocale);
   }
   const groupCount = groupMap.size;
-  const queuePreview = [...groupMap.values()].slice(0, 5);
-  info(`  Key groups: ${groupCount} (each runs shared steps once + per-locale steps × ${tasks.length / Math.max(groupCount, 1) | 0} locales).`);
+  info(`  Key groups: ${groupCount} (each agent call handles one group, fresh context per group).`);
 
   info(`\n→ Launching agent (${provider})…\n`);
 
-  let tokenUsage: TokenUsage;
+  const groupSystemPrompt = await buildGroupSystemPrompt({ webValidationEnabled: cli.webValidate });
+  const tokenUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
   if (provider === "openai") {
-    const { tools, toolNames } = buildOpenAITools(commonDeps);
-    const systemPrompt = await buildSystemPrompt({
-      bundleCount: bundles.length,
-      taskCount: tasks.length,
-      groupCount,
-      queuePreview,
-      webValidationEnabled: cli.webValidate,
-      toolNames,
-    });
-    tokenUsage = await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
+    const { handlers, commitTool } = buildOpenAITools(commonDeps);
+    let groupNum = 0;
+    while (true) {
+      const { group } = JSON.parse(await handlers.nextKeyGroup()) as { group: object | null };
+      if (!group) break;
+      groupNum++;
+      info(`  [group ${groupNum}/${groupCount}] translating…`);
+      const usage = await runOpenAIGroup({ model, systemPrompt: groupSystemPrompt, group, commitTool, quiet: cli.json });
+      tokenUsage.inputTokens += usage.inputTokens;
+      tokenUsage.outputTokens += usage.outputTokens;
+    }
+    await handlers.emitReport();
   } else {
-    const { server, toolNames } = buildAnthropicServer(commonDeps);
-    const systemPrompt = await buildSystemPrompt({
-      bundleCount: bundles.length,
-      taskCount: tasks.length,
-      groupCount,
-      queuePreview,
-      webValidationEnabled: cli.webValidate,
-      toolNames,
-    });
-    tokenUsage = await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
+    const { server, handlers } = buildAnthropicServer(commonDeps);
+    let groupNum = 0;
+    while (true) {
+      const { group } = JSON.parse(await handlers.nextKeyGroup()) as { group: object | null };
+      if (!group) break;
+      groupNum++;
+      info(`  [group ${groupNum}/${groupCount}] translating…`);
+      const usage = await runAnthropicGroup({ model, systemPrompt: groupSystemPrompt, group, server, root: cli.root, quiet: cli.json });
+      tokenUsage.inputTokens += usage.inputTokens;
+      tokenUsage.outputTokens += usage.outputTokens;
+    }
+    await handlers.emitReport();
   }
 
   if (finalReport) {

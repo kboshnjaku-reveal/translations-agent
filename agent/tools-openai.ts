@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { tool } from "@openai/agents";
-import { makeHandlers, type ServerDeps, type ReportStats } from "./tools-core.js";
+import { makeHandlers, type ServerDeps, type ReportStats, type ToolHandlers } from "./tools-core.js";
 
 export type { ServerDeps, ReportStats };
 
@@ -22,7 +22,15 @@ const commitBundleParams = z.object({
 // ── Tool builder ───────────────────────────────────────────────────────────────
 
 export function buildOpenAITools(deps: ServerDeps) {
-  const h = makeHandlers(deps);
+  const h: ToolHandlers = makeHandlers(deps);
+
+  const commitTool = tool({
+    name: "commit_bundle",
+    description:
+      "Persist translation updates for a single bundle. Call ONCE per key group with one entry in `updates` for every locale you translated. The server validates placeholder structure and locale rules, scores confidence, and overrides needsReview to true when confidence is low (escalate or mandatory tier). Set needsReview=true if you have specific quality concerns; the server may also set it independently. Use this — never use raw Write on locale JSON.",
+    parameters: commitBundleParams,
+    execute: async (input: z.infer<typeof commitBundleParams>) => h.commitBundle(input),
+  });
 
   const allTools = [
     tool({
@@ -33,13 +41,7 @@ export function buildOpenAITools(deps: ServerDeps) {
       execute: async () => h.nextKeyGroup(),
     }),
 
-    tool({
-      name: "commit_bundle",
-      description:
-        "Persist translation updates for a single bundle. Call ONCE per key group with one entry in `updates` for every locale you translated. The server validates placeholder structure and locale rules, scores confidence, and overrides needsReview to true when confidence is low (escalate or mandatory tier). Set needsReview=true if you have specific quality concerns; the server may also set it independently. Use this — never use raw Write on locale JSON.",
-      parameters: commitBundleParams,
-      execute: async (input: z.infer<typeof commitBundleParams>) => h.commitBundle(input),
-    }),
+    commitTool,
 
     tool({
       name: "emit_report",
@@ -51,5 +53,5 @@ export function buildOpenAITools(deps: ServerDeps) {
   ];
 
   const toolNames = allTools.map((t) => t.name);
-  return { tools: allTools, toolNames };
+  return { tools: allTools, toolNames, handlers: h, commitTool };
 }

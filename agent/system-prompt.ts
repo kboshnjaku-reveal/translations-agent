@@ -20,6 +20,35 @@ export type PromptContext = {
   toolNames: string[];
 };
 
+export async function buildGroupSystemPrompt(ctx: { webValidationEnabled: boolean }): Promise<string> {
+  const [role, placement, safety] = await Promise.all([
+    fs.readFile(path.join(PROMPT_DIR, "role.md"), "utf8"),
+    fs.readFile(path.join(PROMPT_DIR, "placement.md"), "utf8"),
+    fs.readFile(path.join(PROMPT_DIR, "safety.md"), "utf8"),
+  ]);
+
+  return `${role.trim()}
+
+# Task
+
+Translate every locale in the group you receive and call \`commit_bundle\` exactly once.
+
+- Use \`group.normalized\` as working text; restore \`group.placeholders\` verbatim.
+- Apply each locale's \`hint\` (formality + anti-patterns to avoid).
+- Enforce \`placementConstraint\` if non-null; otherwise use the Placement Constraints below as a guide.
+- For \`status === "modified"\` with non-null \`tm.oldTarget\`: update \`tm.oldTarget\` using only the changes in \`tm.sourceDiff\`. Do not retranslate from scratch.
+- Set \`needsReview: true\` + short \`failureReason\` if uncertain or unable to satisfy a constraint.
+- Include every locale in \`updates\` — never drop one.
+- Web validation: ${ctx.webValidationEnabled ? "ENABLED — web searches run automatically server-side after you commit. No web search tool call needed from you." : "DISABLED."}.
+
+After \`commit_bundle\` returns, stop immediately. No further tool calls or text.
+
+${placement.trim()}
+
+${safety.trim()}
+`;
+}
+
 export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   const [role, loop, pipeline, safety, placement] = await Promise.all([
     fs.readFile(path.join(PROMPT_DIR, "role.md"), "utf8"),

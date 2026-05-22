@@ -125,9 +125,9 @@ export type HtmlReportGroup = {
 export type EnrichedLocale = {
   taskId: string;
   targetLocale: string;
-  rules: Record<string, unknown>;
+  hint: string;
   placementConstraint: unknown | null;
-  tm: { oldSource: string | null; oldTarget: string | null; sourceDiff: string | null };
+  tm: { oldTarget: string | null; sourceDiff: string | null };
 };
 
 export type KeyGroupResponse = {
@@ -181,6 +181,16 @@ function computeSourceDiff(oldSource: string, newSource: string): string {
   return parts.length > 0
     ? parts.join("; ")
     : "no word-level changes (reordering or punctuation only)";
+}
+
+function buildHint(rules: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof rules.formality === "string") parts.push(rules.formality);
+  if (Array.isArray(rules.antiPatterns) && rules.antiPatterns.length > 0) {
+    const patterns = (rules.antiPatterns as string[]).slice(0, 2).join(" ");
+    parts.push(`Avoid: ${patterns}`);
+  }
+  return parts.join(" | ");
 }
 
 // ── Handler factory ────────────────────────────────────────────────────────────
@@ -315,12 +325,11 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
           structureRules: ["Preserve placeholders exactly.", "Preserve ICU plural/select syntax."],
         }) as Record<string, unknown>;
 
-        let tm: EnrichedLocale["tm"] = { oldSource: null, oldTarget: null, sourceDiff: null };
+        let tm: EnrichedLocale["tm"] = { oldTarget: null, sourceDiff: null };
         if (m.status === "modified" && m.oldValue !== null) {
           const targetFile = bundle?.targets.find((t) => t.locale === m.targetLocale);
           const rawTarget = targetFile ? getDeep(targetFile.json, m.keyPath) : null;
           tm = {
-            oldSource: m.oldValue,
             oldTarget: typeof rawTarget === "string" ? rawTarget : null,
             sourceDiff: computeSourceDiff(m.oldValue, m.newValue),
           };
@@ -329,7 +338,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         return {
           taskId: m.taskId,
           targetLocale: m.targetLocale,
-          rules,
+          hint: buildHint(rules),
           placementConstraint: placementRule ?? null,
           tm,
         };
