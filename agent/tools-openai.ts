@@ -36,7 +36,6 @@ const validateParams = z.object({
 
 const scoreParams = z.object({
   taskId: z.string(),
-  webScore: z.number().nullable().optional(),
   localeScore: z.number(),
   structureScore: z.number(),
 });
@@ -126,7 +125,7 @@ export function buildOpenAITools(deps: ServerDeps) {
     tool({
       name: "score_confidence",
       description:
-        "Compute overall confidence: web*0.45 + locale*0.40 + structure*0.15 (or locale/structure renormalized if web omitted). Returns {total, tier}: tier is auto (>0.95), optional (>=0.85), escalate (>=0.70), or mandatory (<0.70). MUST be called as step 8.",
+        "Compute overall confidence from locale and structure checks only: locale*0.727 + structure*0.273. Returns {total, tier}: tier is auto (>0.95), optional (>=0.85), escalate (>=0.70), or mandatory (<0.70). MUST be called as step 8. Do NOT pass webScore — it is not used.",
       parameters: scoreParams,
       execute: async (input: z.infer<typeof scoreParams>) => h.scoreConfidence(input),
     }),

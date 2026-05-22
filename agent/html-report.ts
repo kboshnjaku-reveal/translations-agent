@@ -189,7 +189,7 @@ function renderLocale(locale: HtmlLocaleResult): string {
   const webQueriesHtml =
     locale.webValidation.webQueries.length > 0
       ? `<ul>${locale.webValidation.webQueries.map((q) => `<li><code>${escapeHtml(q)}</code></li>`).join("")}</ul>`
-      : `<div class="small">No web queries were captured for this locale. If web confidence is present, the agent may have provided a numeric webScore without emitting query telemetry.</div>`;
+      : `<div class="small">No web queries were captured for this locale. Web validation is evidence-only and does not affect the confidence score.</div>`;
 
   const webSourcesHtml =
     locale.webValidation.webSources.length > 0
@@ -199,7 +199,7 @@ function renderLocale(locale: HtmlLocaleResult): string {
             return `<li><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a></li>`;
           })
           .join("")}</ul>`
-      : `<div class="small">No source links were captured. This can happen when the model reports only a webScore.</div>`;
+      : `<div class="small">No source links were captured for this locale.</div>`;
 
   const summariesHtml =
     locale.webValidation.summaries.length > 0
@@ -260,7 +260,6 @@ function renderLocale(locale: HtmlLocaleResult): string {
       ${warningHtml}
       <div class="kv"><strong>Evidence status:</strong> ${escapeHtml(locale.webValidation.evidenceStatus)}</div>
       <div class="kv"><strong>Evidence origin:</strong> ${escapeHtml(locale.webValidation.evidenceOrigin)}</div>
-      <div class="kv"><strong>Web score source:</strong> ${escapeHtml(locale.webValidation.scoreSource)}</div>
       <div class="kv"><strong>Source count:</strong> ${locale.webValidation.sourceCount}</div>
       <div class="kv"><strong>Supported:</strong> ${locale.webValidation.supported === null ? "n/a" : locale.webValidation.supported ? "yes" : "no"}</div>
       <div class="small"><strong>Search queries</strong></div>

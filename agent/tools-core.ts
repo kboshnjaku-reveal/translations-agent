@@ -152,7 +152,7 @@ export type ValidateInput = {
   placeholders: Array<{ token: string; original: string }>;
   traceTokens: string[];
 };
-export type ScoreInput = { taskId: string; webScore?: number | null; localeScore: number; structureScore: number };
+export type ScoreInput = { taskId: string; localeScore: number; structureScore: number };
 export type ReadLocaleInput = { bundleId: string; locale: string };
 export type CommitBundleInput = {
   bundleId: string;
@@ -257,20 +257,14 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     }
     const webSources = [...sourceMap.values()];
     const summaries = events.map((e) => e.summary).filter((s) => s.length > 0);
-    const taskConfidence = telemetry.get(taskId)?.confidence;
-    const hasWebScore = taskConfidence?.webScore !== null && taskConfidence?.webScore !== undefined;
     const hasEvidence = events.length > 0 || webSources.length > 0;
-
-    let evidenceStatus: "evidence-captured" | "score-only" | "not-run";
-    if (hasEvidence) evidenceStatus = "evidence-captured";
-    else if (hasWebScore) evidenceStatus = "score-only";
-    else evidenceStatus = "not-run";
+    const evidenceStatus: "evidence-captured" | "score-only" | "not-run" = hasEvidence ? "evidence-captured" : "not-run";
 
     const evidenceOrigin: "task-matched" | "fallback-run" | "none" =
       directEvents.length > 0 ? "task-matched" : events.length > 0 ? "fallback-run" : "none";
 
-    const warning = evidenceStatus === "score-only"
-      ? "Web confidence exists but no query/source telemetry was captured for this locale."
+    const warning = evidenceStatus === "not-run" && directEvents.length === 0
+      ? "WebSearch was not called for this locale — no web evidence captured."
       : undefined;
 
     const transcript = events.map((e) => ({
@@ -471,15 +465,15 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       return ok({ valid, issues, structureScore, localeScore, traceToken: newToken });
     },
 
-    scoreConfidence: async ({ taskId, webScore, localeScore, structureScore }) => {
+    scoreConfidence: async ({ taskId, localeScore, structureScore }) => {
       const task = requireTask(taskId);
       if (!task) return err("Unknown taskId.");
-      const result = scoreConfidence({ webScore: webScore ?? undefined, localeScore, structureScore });
+      const result = scoreConfidence({ localeScore, structureScore });
       upsertTelemetry(taskId, {
         confidence: {
           total: result.total,
           tier: result.tier,
-          webScore: webScore ?? null,
+          webScore: null,
           components: result.components,
         },
       });
@@ -534,10 +528,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
             glossaryMatches: taskTelemetry?.glossaryMatches ?? [],
             localeValidation: taskTelemetry?.localeValidation ?? null,
             alternatives: [],
-            webValidationNote:
-              taskTelemetry?.confidence?.webScore === null
-                ? "Web validation score unavailable for this locale in this run."
-                : "Web confidence reflects the webScore provided to score_confidence; evidence may come from task-matched or fallback WebSearch captures.",
+            webValidationNote: "Web validation is evidence-only; results appear in the report but do not affect the confidence score.",
             webValidation: buildWebValidation(task.taskId),
           });
         }
@@ -622,8 +613,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
             ...group,
             locales: group.locales.map((localeResult) => ({
               ...localeResult,
-              webValidationNote:
-                localeResult.confidence && localeResult.confidence.webScore !== null
+              webValidationNote: localeResult.confidence
                   ? `${localeResult.webValidationNote} action=${tierToAction(localeResult.confidence.tier)}.`
                   : localeResult.webValidationNote,
             })),

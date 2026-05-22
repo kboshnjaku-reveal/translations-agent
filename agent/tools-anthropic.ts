@@ -134,24 +134,21 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
     tool(
       "score_confidence",
-      "Compute overall confidence: web*0.45 + locale*0.40 + structure*0.15 (or locale/structure renormalized if web omitted). Returns {total, tier}: tier is auto (>0.95), optional (>=0.85), escalate (>=0.70), or mandatory (<0.70). MUST be called as step 8.",
+      "Compute overall confidence from locale and structure checks only: locale*0.727 + structure*0.273. Returns {total, tier}: tier is auto (>0.95), optional (>=0.85), escalate (>=0.70), or mandatory (<0.70). MUST be called as step 8. Do NOT pass webScore — it is not used.",
       {
         taskId: z.string(),
-        webScore: z.number().optional(),
         localeScore: z.number(),
         structureScore: z.number(),
       },
       async ({
         taskId,
-        webScore,
         localeScore,
         structureScore,
       }: {
         taskId: string;
-        webScore?: number;
         localeScore: number;
         structureScore: number;
-      }) => wrapResult(await h.scoreConfidence({ taskId, webScore, localeScore, structureScore })),
+      }) => wrapResult(await h.scoreConfidence({ taskId, localeScore, structureScore })),
     ),
 
     tool(
