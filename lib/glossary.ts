@@ -49,6 +49,9 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
     return [];
   }
 
+  // Require presence in at least MIN_LOCALE_COVERAGE locales, but never more than exist.
+  const minCoverage = Math.max(1, Math.min(MIN_LOCALE_COVERAGE, targets.length));
+
   const sourceMap = new Map<string, string>();
   for (const e of source.entries) sourceMap.set(e.keyPath, e.value);
 
@@ -56,8 +59,6 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
 
   let processedPairs = 0;
   let skippedMissingInSource = 0;
-  let skippedShortTerms = 0;
-  let skippedWordCountMismatch = 0;
 
   for (const target of targets) {
     for (const targetEntry of target.entries) {
@@ -70,41 +71,24 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
 
       const srcTerms = extractTerms(sourceValue);
       const tgtTerms = extractTerms(targetEntry.value);
+      if (srcTerms.length === 0 || tgtTerms.length === 0) continue;
 
-      for (let i = 0; i < srcTerms.length; i++) {
-        for (let j = i + 1; j <= Math.min(i + MAX_WORDS, srcTerms.length); j++) {
-          const srcPhrase = srcTerms.slice(i, j).join(" ");
-          if (!srcPhrase || srcPhrase.length < 3) {
-            skippedShortTerms++;
-            continue;
-          }
-
-          // Find the best-matching target phrase of same word count
-          const wordCount = j - i;
-          if (tgtTerms.length < wordCount) {
-            skippedWordCountMismatch++;
-            continue;
-          }
-
+      // Whole-value extraction: only when the source value fits within MAX_WORDS.
+      // Avoids the positional-alignment problem that arises when slicing sub-phrases
+      // out of longer sentences (different languages reorder words).
+      if (srcTerms.length <= MAX_WORDS) {
+        const srcPhrase = srcTerms.join(" ");
+        if (srcPhrase.length >= 3) {
           const normalizedSrc = normalize(srcPhrase);
-          let bestTgt: string | null = null;
-
-          // If keepEnglish hint or term appears verbatim in target → keepEnglish path
-          if (containsVerbatim(targetEntry.value, srcPhrase)) {
-            bestTgt = srcPhrase;
-          } else {
-            // Heuristic: pick the target phrase of same length most likely to align (first match)
-            // We'll deduplicate later; here we just record any candidate
-            bestTgt = tgtTerms.slice(0, wordCount).join(" ");
-          }
-          if (!bestTgt) continue;
-
+          const tgt = containsVerbatim(targetEntry.value, srcPhrase)
+            ? srcPhrase
+            : tgtTerms.join(" ");
           const entry = candidateCounts.get(normalizedSrc) ?? {
             source: srcPhrase,
             translations: new Map<string, Map<string, number>>(),
           };
           const localeMap = entry.translations.get(target.locale) ?? new Map<string, number>();
-          localeMap.set(bestTgt, (localeMap.get(bestTgt) ?? 0) + 1);
+          localeMap.set(tgt, (localeMap.get(tgt) ?? 0) + 1);
           entry.translations.set(target.locale, localeMap);
           candidateCounts.set(normalizedSrc, entry);
         }
@@ -117,7 +101,7 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
   const glossary: GlossaryEntry[] = [];
   let skippedByCoverage = 0;
   for (const { source: src, translations } of candidateCounts.values()) {
-    if (translations.size < MIN_LOCALE_COVERAGE) {
+    if (translations.size < minCoverage) {
       skippedByCoverage++;
       continue;
     }
@@ -134,7 +118,7 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
     glossary.push({ source: src, translations: resolved, keepEnglish });
   }
 
-  console.warn(`[glossary] Candidates: ${candidateCounts.size}, skipped by MIN_LOCALE_COVERAGE(${MIN_LOCALE_COVERAGE}): ${skippedByCoverage}, before dedup: ${glossary.length}`);
+  console.warn(`[glossary] Candidates: ${candidateCounts.size}, skipped by minCoverage(${minCoverage}): ${skippedByCoverage}, before dedup: ${glossary.length}`);
 
   // Longest-first for greedy matching
   glossary.sort((a, b) => b.source.length - a.source.length);
