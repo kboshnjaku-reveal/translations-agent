@@ -47,15 +47,7 @@ Produce the translation for **every** locale in `group.locales` in a single reas
 
 Do **not** return to the agent loop between locales. Translate them all in one turn.
 
-## Step 2 — WebSearch (when web validation is enabled)
-
-When web validation is enabled, call WebSearch for each locale **before committing**. This is for **evidence collection only** — results appear in the HTML report and do not affect scoring:
-
-- `WebSearch({ taskId: L.taskId, targetLocale: L.targetLocale, query: "<translated term> <targetLocale> localization" })`
-
-If web validation is disabled, skip this step entirely.
-
-## Step 3 — commit_bundle
+## Step 2 — commit_bundle
 
 Call `commit_bundle` **once** per group with one entry per locale:
 

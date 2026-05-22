@@ -28,6 +28,11 @@ export type ServerDeps = {
   onGroupCommitted?: (bundleId: string, keyPath: string) => Promise<void> | void;
   webSearchByTaskId?: Map<string, HtmlWebSearchEvent[]>;
   fallbackWebSearchEvents?: HtmlWebSearchEvent[];
+  /**
+   * When provided and webValidationEnabled is true, commitBundle calls this
+   * automatically for every locale in the update — no agent tool call needed.
+   */
+  webSearcher?: (queries: Array<{ taskId: string; targetLocale: string; query: string }>) => Promise<void>;
   log: (msg: string) => void;
 };
 
@@ -406,6 +411,23 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
           dryRun: deps.dryRun,
         },
       );
+
+      // Run web searches for all locales before building report entries so
+      // buildWebValidation finds populated results in webSearchByTaskId.
+      if (deps.webSearcher) {
+        const queries: Array<{ taskId: string; targetLocale: string; query: string }> = [];
+        for (const u of scoredUpdates) {
+          const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
+          if (task) {
+            queries.push({
+              taskId: task.taskId,
+              targetLocale: u.targetLocale,
+              query: `${u.value} ${u.targetLocale}`,
+            });
+          }
+        }
+        if (queries.length > 0) await deps.webSearcher(queries);
+      }
 
       for (const w of result.written) state.updatedFiles.add(`${bundleId}/${w}`);
       for (const u of scoredUpdates) {
