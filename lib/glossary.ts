@@ -53,7 +53,7 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
   const minCoverage = Math.max(1, Math.min(MIN_LOCALE_COVERAGE, targets.length));
 
   const sourceMap = new Map<string, string>();
-  for (const e of source.entries) sourceMap.set(e.keyPath, e.value);
+  for (const e of stripLocalePrefix(source.entries, sourceLocale)) sourceMap.set(e.keyPath, e.value);
 
   const candidateCounts = new Map<string, { source: string; translations: Map<string, Map<string, number>> }>();
 
@@ -61,7 +61,7 @@ export function buildGlossary(sources: LocaleEntries[], sourceLocale: string): G
   let skippedMissingInSource = 0;
 
   for (const target of targets) {
-    for (const targetEntry of target.entries) {
+    for (const targetEntry of stripLocalePrefix(target.entries, target.locale)) {
       const sourceValue = sourceMap.get(targetEntry.keyPath);
       if (!sourceValue) {
         skippedMissingInSource++;
@@ -165,6 +165,14 @@ export function findMatches(glossary: GlossaryEntry[], text: string, targetLocal
   }
 
   return matches;
+}
+
+function stripLocalePrefix(entries: FlatEntry[], locale: string): FlatEntry[] {
+  const prefix = locale + ".";
+  if (entries.length > 0 && entries[0]!.keyPath.startsWith(prefix)) {
+    return entries.map((e) => ({ ...e, keyPath: e.keyPath.slice(prefix.length) }));
+  }
+  return entries;
 }
 
 function extractTerms(text: string): string[] {
