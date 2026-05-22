@@ -94,7 +94,7 @@ export type HtmlWebValidation = {
   webSources: HtmlWebSource[];
   summaries: string[];
   evidenceStatus: "evidence-captured" | "score-only" | "not-run";
-  evidenceOrigin: "task-matched" | "fallback-run" | "none";
+  evidenceOrigin: "task-matched" | "none";
   scoreSource: "score_confidence_input";
   warning?: string;
   transcript: Array<{
@@ -209,8 +209,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
   };
 
   const buildWebValidation = (taskId: string): HtmlWebValidation => {
-    const directEvents = deps.webSearchByTaskId?.get(taskId) ?? [];
-    const events = directEvents.length > 0 ? directEvents : (deps.fallbackWebSearchEvents ?? []);
+    const events = deps.webSearchByTaskId?.get(taskId) ?? [];
     const webQueries = [...new Set(events.map((e) => e.query))];
 
     const sourceMap = new Map<string, HtmlWebSource>();
@@ -223,15 +222,10 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     }
     const webSources = [...sourceMap.values()];
     const summaries = events.map((e) => e.summary).filter((s) => s.length > 0);
-    const hasEvidence = events.length > 0 || webSources.length > 0;
+    const hasEvidence = events.length > 0;
     const evidenceStatus: "evidence-captured" | "score-only" | "not-run" = hasEvidence ? "evidence-captured" : "not-run";
-
-    const evidenceOrigin: "task-matched" | "fallback-run" | "none" =
-      directEvents.length > 0 ? "task-matched" : events.length > 0 ? "fallback-run" : "none";
-
-    const warning = evidenceStatus === "not-run" && directEvents.length === 0
-      ? "WebSearch was not called for this locale — no web evidence captured."
-      : undefined;
+    const evidenceOrigin: "task-matched" | "none" = hasEvidence ? "task-matched" : "none";
+    const warning = !hasEvidence ? "WebSearch was not called for this locale — no web evidence captured." : undefined;
 
     const transcript = events.map((e) => ({
       query: e.query,
@@ -241,7 +235,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     }));
 
     return {
-      supported: events.length > 0 ? webSources.length > 0 : null,
+      supported: hasEvidence ? webSources.length > 0 : null,
       sourceCount: webSources.length,
       webQueries,
       webSources,
