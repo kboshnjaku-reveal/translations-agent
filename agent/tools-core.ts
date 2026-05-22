@@ -143,7 +143,6 @@ export type ValidateInput = {
   traceTokens: string[];
 };
 export type ScoreInput = { taskId: string; localeScore: number; structureScore: number };
-export type ReadLocaleInput = { bundleId: string; locale: string };
 export type CommitBundleInput = {
   bundleId: string;
   updates: Array<{ targetLocale: string; keyPath: string; value: string; needsReview: boolean; failureReason?: string | null }>;
@@ -158,7 +157,6 @@ export type ToolHandlers = {
   getLocaleRules: (input: LocaleRulesInput) => Promise<string>;
   validateTranslation: (input: ValidateInput) => Promise<string>;
   scoreConfidence: (input: ScoreInput) => Promise<string>;
-  readLocaleFile: (input: ReadLocaleInput) => Promise<string>;
   commitBundle: (input: CommitBundleInput) => Promise<string>;
   emitReport: (input: EmitReportInput) => Promise<string>;
   translationMemory: (input: TranslationMemoryInput) => Promise<string>;
@@ -452,16 +450,6 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       });
       trace.issue(taskId, "score");
       return ok(result);
-    },
-
-    readLocaleFile: async ({ bundleId, locale }) => {
-      const bundle = deps.bundles.find((b) => b.id === bundleId);
-      if (!bundle) return err(`Unknown bundleId: ${bundleId}`);
-      const target =
-        bundle.targets.find((t) => t.locale === locale) ??
-        (bundle.sourceLocale === locale ? bundle.sourceFile : undefined);
-      if (!target) return err(`Locale ${locale} not present in bundle ${bundleId}`);
-      return ok({ locale, json: target.json });
     },
 
     commitBundle: async ({ bundleId, updates }) => {

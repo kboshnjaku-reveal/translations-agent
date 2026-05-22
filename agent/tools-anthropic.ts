@@ -127,14 +127,6 @@ export function buildAnthropicServer(deps: ServerDeps) {
     ),
 
     tool(
-      "read_locale_file",
-      "Read the current content of a target locale file in a bundle (read-only). Use this to consult neighboring keys for tone/terminology consistency.",
-      { bundleId: z.string(), locale: z.string() },
-      async ({ bundleId, locale }: { bundleId: string; locale: string }) =>
-        wrapResult(await h.readLocaleFile({ bundleId, locale })),
-    ),
-
-    tool(
       "commit_bundle",
       "Persist translation updates for a single bundle. Call ONCE per key group with one entry in `updates` for every locale you translated. The host re-runs placeholder structure checks server-side and rejects any structurally-broken updates. Updates with needsReview=true bypass the structure check and write a sibling `<keyPath>__needsReview: true` key. Use this — never use raw Write on locale JSON.",
       {

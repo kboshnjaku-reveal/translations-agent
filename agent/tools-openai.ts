@@ -32,8 +32,6 @@ const scoreParams = z.object({
   structureScore: z.number(),
 });
 
-const readLocaleParams = z.object({ bundleId: z.string(), locale: z.string() });
-
 const commitBundleParams = z.object({
   bundleId: z.string(),
   updates: z.array(
@@ -112,14 +110,6 @@ export function buildOpenAITools(deps: ServerDeps) {
         "Compute overall confidence from locale and structure checks only: locale*0.727 + structure*0.273. Returns {total, tier}: tier is auto (>0.95), optional (>=0.85), escalate (>=0.70), or mandatory (<0.70). MUST be called as step 8. Do NOT pass webScore — it is not used.",
       parameters: scoreParams,
       execute: async (input: z.infer<typeof scoreParams>) => h.scoreConfidence(input),
-    }),
-
-    tool({
-      name: "read_locale_file",
-      description:
-        "Read the current content of a target locale file in a bundle (read-only). Use this to consult neighboring keys for tone/terminology consistency.",
-      parameters: readLocaleParams,
-      execute: async (input: z.infer<typeof readLocaleParams>) => h.readLocaleFile(input),
     }),
 
     tool({
