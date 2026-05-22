@@ -43,7 +43,7 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
 
 - Detected ${ctx.bundleCount} bundle(s).
 - Work queue: ${ctx.groupCount} key group(s), ${ctx.taskCount} total (key × locale) task(s).
-- Web validation: ${ctx.webValidationEnabled ? "ENABLED (call WebSearch on ambiguous/legal content)" : "DISABLED (omit webScore from score_confidence)"}.
+- Web validation: ${ctx.webValidationEnabled ? "ENABLED — call WebSearch for EVERY locale (required, not optional). Never skip it. Never fabricate webScore." : "DISABLED (omit webScore from score_confidence)"}.
 
 First 5 key groups (preview):
 ${preview || "  (queue empty — emit_report and stop)"}

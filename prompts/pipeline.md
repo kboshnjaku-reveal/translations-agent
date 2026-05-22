@@ -55,13 +55,15 @@ For each `L` in `group.locales`, using that locale's candidate translation:
 
 6. **validate_translation** — `{ taskId: L.taskId, source: group.newValue, translation: <candidate>, locale: L.targetLocale, placeholders: <from normalize>, traceTokens: [<normalize>, <L's glossary>, <classify>, <L's locale_rules>] }`. If `valid === false`, read the `issues` array — each issue has a `code` and `expected`/`actual`. Fix the translation against the named issue and re-call validate. **Self-correction budget: at most 2 retries per locale.** On the 3rd failure, take the review path (step 8b) for that locale and continue.
 
-7. **WebSearch (conditional)** — only when web validation is enabled and the content is ambiguous, marketing, or legal-critical. Prefer calling with task metadata when supported by the tool:
-   - `WebSearch({ taskId: L.taskId, targetLocale: L.targetLocale, query: "..." })`
+7. **WebSearch** — **required for every locale** when web validation is enabled. Do not skip it because a translation looks obvious; external confirmation is mandatory for specialized software. Call with task metadata:
+   - `WebSearch({ taskId: L.taskId, targetLocale: L.targetLocale, query: "<translated term> <targetLocale> localization" })`
    - If the tool accepts only `query`, call `WebSearch({ query: "..." })`.
    Search authoritative sources:
    - Standard product UI: Microsoft, Google, Apple, Slack
    - Legal/eDiscovery: Relativity, Everlaw, law-firm style guides, bar associations
-   Require ≥2 authoritative sources to agree before accepting. Convert search certainty into a `webScore` in [0, 1]: 1.0 if ≥2 sources confirm; 0.6 if 1 source; 0.0 if conflicting evidence. If web validation is disabled for this run, skip step 7 and omit `webScore` in step 8.
+   Require ≥2 authoritative sources to agree before accepting. Convert search certainty into a `webScore` in [0, 1]: 1.0 if ≥2 sources confirm; 0.6 if 1 source; 0.0 if conflicting or no evidence.
+   **CRITICAL: If you did not call WebSearch for this locale (step 7 was skipped or web validation is disabled), you MUST omit `webScore` entirely from step 8. Never fabricate a webScore from training knowledge.**
+   If web validation is disabled for this run, skip step 7 and omit `webScore` in step 8.
 
 8. **score_confidence** — `{ taskId: L.taskId, webScore?, localeScore: <from step 6>, structureScore: <from step 6> }`. The returned `tier`:
    - `auto` — include in the `updates` array with `needsReview: false`.
