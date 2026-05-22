@@ -16,6 +16,8 @@ import { buildAnthropicServer } from "./tools-anthropic.js";
 import { writeHtmlReport } from "./html-report.js";
 import type { HtmlWebSearchEvent, ReportStats } from "./tools-core.js";
 
+type TokenUsage = { inputTokens: number; outputTokens: number };
+
 // Resolved once at module load so both dev (tsx agent/index.ts) and prod
 // (dist/agent/index.js) walk up to the correct asset root: repo-root in dev,
 // dist/ in prod (where copy-assets.mjs mirrors data/ and prompts/).
@@ -163,7 +165,7 @@ async function runOpenAI(opts: {
   webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
   fallbackWebSearchEvents: HtmlWebSearchEvent[];
   quiet: boolean;
-}) {
+}): Promise<TokenUsage> {
   const { Agent, run, tool } = await import("@openai/agents");
 
   const webSearchTool = tool({
@@ -266,6 +268,8 @@ async function runOpenAI(opts: {
   // stays a clean JSON document. The final report is the only stdout content.
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
 
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
   for await (const event of streamedResult) {
     if (event.type === "run_item_stream_event") {
       const item = event.item;
@@ -280,6 +284,18 @@ async function runOpenAI(opts: {
           }
         }
       }
+    } else if (event.type === "raw_model_stream_event") {
+      const data = (event as any).data;
+      // Responses API: response.done carries aggregate usage for the turn
+      if (data?.type === "response.done" && data?.response?.usage) {
+        usage.inputTokens += data.response.usage.input_tokens ?? 0;
+        usage.outputTokens += data.response.usage.output_tokens ?? 0;
+      }
+      // Chat Completions API: final chunk carries usage
+      if (data?.usage && !data.type) {
+        usage.inputTokens += data.usage.prompt_tokens ?? 0;
+        usage.outputTokens += data.usage.completion_tokens ?? 0;
+      }
     }
   }
 
@@ -289,6 +305,8 @@ async function runOpenAI(opts: {
   } else {
     out("\n");
   }
+
+  return usage;
 }
 
 // ── Anthropic execution path ───────────────────────────────────────────────────
@@ -304,7 +322,7 @@ async function runAnthropic(opts: {
   webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
   fallbackWebSearchEvents: HtmlWebSearchEvent[];
   quiet: boolean;
-}) {
+}): Promise<TokenUsage> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
   const builtInTools: string[] = opts.webValidate ? ["WebSearch"] : [];
@@ -327,11 +345,18 @@ async function runAnthropic(opts: {
 
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
 
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
   // Maps tool_use_id → { query, taskId, targetLocale } for in-flight WebSearch calls.
   const pendingWebSearches = new Map<string, { query: string; taskId?: string; targetLocale?: string }>();
 
   for await (const message of q) {
     if (message.type === "assistant") {
+      const msgUsage = (message.message as any)?.usage;
+      if (msgUsage) {
+        usage.inputTokens += msgUsage.input_tokens ?? 0;
+        usage.outputTokens += msgUsage.output_tokens ?? 0;
+      }
       const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string; id?: string; input?: Record<string, unknown> }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) {
@@ -412,6 +437,8 @@ async function runAnthropic(opts: {
       break;
     }
   }
+
+  return usage;
 }
 
 // ── Report ─────────────────────────────────────────────────────────────────────
@@ -633,6 +660,7 @@ async function main() {
 
   info(`\n→ Launching agent (${provider})…\n`);
 
+  let tokenUsage: TokenUsage;
   if (provider === "openai") {
     const { tools, toolNames } = buildOpenAITools(commonDeps);
     const systemPrompt = await buildSystemPrompt({
@@ -643,7 +671,7 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
+    tokenUsage = await runOpenAI({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, tools, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
   } else {
     const { server, toolNames } = buildAnthropicServer(commonDeps);
     const systemPrompt = await buildSystemPrompt({
@@ -654,7 +682,7 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
+    tokenUsage = await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
   }
 
   if (finalReport) {
@@ -669,6 +697,7 @@ async function main() {
       process.stdout.write(JSON.stringify(finalReport, null, 2) + "\n");
     } else {
       printReport(finalReport);
+      info(`\nToken usage: ${tokenUsage.inputTokens.toLocaleString()} in / ${tokenUsage.outputTokens.toLocaleString()} out (${(tokenUsage.inputTokens + tokenUsage.outputTokens).toLocaleString()} total)`);
       if (cli.dryRun) {
         info("\n[dry-run] No files were written. Re-run without --dry-run to apply.");
       }
