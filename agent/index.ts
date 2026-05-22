@@ -268,8 +268,6 @@ async function runOpenAI(opts: {
   // stays a clean JSON document. The final report is the only stdout content.
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
 
-  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
-
   for await (const event of streamedResult) {
     if (event.type === "run_item_stream_event") {
       const item = event.item;
@@ -284,18 +282,6 @@ async function runOpenAI(opts: {
           }
         }
       }
-    } else if (event.type === "raw_model_stream_event") {
-      const data = (event as any).data;
-      // Responses API: response.done carries aggregate usage for the turn
-      if (data?.type === "response.done" && data?.response?.usage) {
-        usage.inputTokens += data.response.usage.input_tokens ?? 0;
-        usage.outputTokens += data.response.usage.output_tokens ?? 0;
-      }
-      // Chat Completions API: final chunk carries usage
-      if (data?.usage && !data.type) {
-        usage.inputTokens += data.usage.prompt_tokens ?? 0;
-        usage.outputTokens += data.usage.completion_tokens ?? 0;
-      }
     }
   }
 
@@ -306,6 +292,12 @@ async function runOpenAI(opts: {
     out("\n");
   }
 
+  // rawResponses accumulates one ModelResponse per agent turn, each with camelCase usage fields.
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+  for (const r of (streamedResult as any).rawResponses ?? []) {
+    usage.inputTokens += r.usage?.inputTokens ?? 0;
+    usage.outputTokens += r.usage?.outputTokens ?? 0;
+  }
   return usage;
 }
 
@@ -352,11 +344,6 @@ async function runAnthropic(opts: {
 
   for await (const message of q) {
     if (message.type === "assistant") {
-      const msgUsage = (message.message as any)?.usage;
-      if (msgUsage) {
-        usage.inputTokens += msgUsage.input_tokens ?? 0;
-        usage.outputTokens += msgUsage.output_tokens ?? 0;
-      }
       const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string; id?: string; input?: Record<string, unknown> }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) {
@@ -428,6 +415,10 @@ async function runAnthropic(opts: {
         }
       }
     } else if (message.type === "result") {
+      // result message carries aggregate camelCase usage for the entire run.
+      const r = message as any;
+      usage.inputTokens = r.usage?.inputTokens ?? usage.inputTokens;
+      usage.outputTokens = r.usage?.outputTokens ?? usage.outputTokens;
       if (message.subtype === "success") {
         if (!opts.quiet) console.log("\n");
       } else {
@@ -439,6 +430,31 @@ async function runAnthropic(opts: {
   }
 
   return usage;
+}
+
+// ── Token usage ledger ────────────────────────────────────────────────────────
+
+type UsageLedger = {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  runs: number;
+  lastUpdated: string;
+};
+
+async function updateTokenLedger(root: string, run: TokenUsage): Promise<UsageLedger> {
+  const ledgerPath = path.join(root, ".translations-agent-usage.json");
+  let ledger: UsageLedger = { totalInputTokens: 0, totalOutputTokens: 0, runs: 0, lastUpdated: "" };
+  try {
+    ledger = JSON.parse(await fs.readFile(ledgerPath, "utf8")) as UsageLedger;
+  } catch {
+    // first run — start from zero
+  }
+  ledger.totalInputTokens += run.inputTokens;
+  ledger.totalOutputTokens += run.outputTokens;
+  ledger.runs += 1;
+  ledger.lastUpdated = new Date().toISOString();
+  await fs.writeFile(ledgerPath, JSON.stringify(ledger, null, 2) + "\n", "utf8");
+  return ledger;
 }
 
 // ── Report ─────────────────────────────────────────────────────────────────────
@@ -697,7 +713,9 @@ async function main() {
       process.stdout.write(JSON.stringify(finalReport, null, 2) + "\n");
     } else {
       printReport(finalReport);
-      info(`\nToken usage: ${tokenUsage.inputTokens.toLocaleString()} in / ${tokenUsage.outputTokens.toLocaleString()} out (${(tokenUsage.inputTokens + tokenUsage.outputTokens).toLocaleString()} total)`);
+      const ledger = await updateTokenLedger(cli.root, tokenUsage);
+      info(`\nToken usage (this run):  ${tokenUsage.inputTokens.toLocaleString()} in / ${tokenUsage.outputTokens.toLocaleString()} out`);
+      info(`Token usage (all runs):  ${ledger.totalInputTokens.toLocaleString()} in / ${ledger.totalOutputTokens.toLocaleString()} out  (${ledger.runs} run${ledger.runs === 1 ? "" : "s"})`);
       if (cli.dryRun) {
         info("\n[dry-run] No files were written. Re-run without --dry-run to apply.");
       }
