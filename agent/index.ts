@@ -166,80 +166,6 @@ async function runOpenAI(opts: {
 }) {
   const { Agent, run, tool } = await import("@openai/agents");
 
-  const extractOutputText = (response: any): string =>
-    (response?.output ?? [])
-      .filter((b: any) => b?.type === "message")
-      .flatMap((b: any) => b?.content ?? [])
-      .filter((c: any) => c?.type === "output_text")
-      .map((c: any) => (typeof c?.text === "string" ? c.text : ""))
-      .join("\n");
-
-  const parseStructuredJson = (text: string): { summary?: string; sources?: Array<{ url?: string; title?: string }> } | null => {
-    const trimmed = text.trim();
-    const unfenced = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    const firstBrace = unfenced.indexOf("{");
-    const lastBrace = unfenced.lastIndexOf("}");
-    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
-    const candidate = unfenced.slice(firstBrace, lastBrace + 1);
-    try {
-      const parsed = JSON.parse(candidate);
-      if (typeof parsed !== "object" || parsed === null) return null;
-      return parsed as { summary?: string; sources?: Array<{ url?: string; title?: string }> };
-    } catch {
-      return null;
-    }
-  };
-
-  const captureSourceLinks = (response: any): Array<{ url: string; title?: string }> => {
-    const dedup = new Map<string, { url: string; title?: string }>();
-
-    const contentBlocks = (response?.output ?? [])
-      .filter((b: any) => b?.type === "message")
-      .flatMap((b: any) => b?.content ?? []);
-
-    for (const block of contentBlocks) {
-      const annotations = Array.isArray(block?.annotations) ? block.annotations : [];
-      for (const ann of annotations) {
-        const url = typeof ann?.url === "string" ? ann.url : undefined;
-        if (!url) continue;
-        const title = typeof ann?.title === "string" ? ann.title : undefined;
-        if (!dedup.has(url)) dedup.set(url, { url, title });
-      }
-    }
-
-    const text = extractOutputText(response);
-    const urlMatches = text.match(/https?:\/\/[^\s)\]]+/g) ?? [];
-    for (const m of urlMatches) {
-      if (!dedup.has(m)) dedup.set(m, { url: m });
-    }
-
-    const structured = parseStructuredJson(text);
-    const structuredSources = Array.isArray(structured?.sources) ? structured.sources : [];
-    for (const src of structuredSources) {
-      const url = typeof src?.url === "string" ? src.url.trim() : "";
-      if (!url) continue;
-      const title = typeof src?.title === "string" && src.title.trim().length > 0 ? src.title.trim() : undefined;
-      if (!dedup.has(url)) dedup.set(url, { url, title });
-    }
-
-    return [...dedup.values()];
-  };
-
-  const buildWebSearchPrompt = (query: string, retry: boolean): string => {
-    const retryNote = retry
-      ? "Previous attempt returned no usable source URLs. Retry and include concrete links."
-      : "";
-    return [
-      retryNote,
-      `Search for: ${query}`,
-      "Return ONLY valid JSON with this shape:",
-      '{"summary":"<concise factual summary>","sources":[{"url":"https://...","title":"..."}]}',
-      "Include 2+ authoritative source URLs when available. Do not include markdown.",
-    ]
-      .filter((line) => line.length > 0)
-      .join("\n");
-  };
-
   const webSearchTool = tool({
     name: "WebSearch",
     description: "Search the web for authoritative sources on a translation term or legal phrase. Always pass the locale taskId and targetLocale to support run reporting.",
@@ -249,55 +175,72 @@ async function runOpenAI(opts: {
       targetLocale: z.string().nullable().optional(),
     }),
     execute: async (input: { query: string; taskId?: string | null; targetLocale?: string | null }) => {
+      // Build the event upfront so we always push it — even on failure — so the
+      // query appears in the HTML report regardless of whether the search succeeded.
+      const event: HtmlWebSearchEvent = {
+        query: input.query,
+        targetLocale: input.targetLocale ?? undefined,
+        summary: "",
+        sources: [],
+      };
+
       try {
         const { default: OpenAI } = await import("openai");
         const openai = new OpenAI();
-        const runSearch = async (retry: boolean) =>
-          (openai.responses as any).create({
-            model: "gpt-4o",
-            tools: [{ type: "web_search_preview" }],
-            input: buildWebSearchPrompt(input.query, retry),
-          });
 
-        let response = await runSearch(false);
-        let text = extractOutputText(response);
-        let sources = captureSourceLinks(response);
+        // gpt-4o-search-preview via Chat Completions is the reliable path: it
+        // performs web search natively and returns URL citations in
+        // message.annotations as {type:"url_citation", url_citation:{url,title}}.
+        const response = await (openai.chat.completions as any).create({
+          model: "gpt-4o-search-preview",
+          web_search_options: {},
+          messages: [{ role: "user", content: input.query }],
+        });
 
-        // One retry maximum when no URLs were captured.
-        if (sources.length === 0) {
-          response = await runSearch(true);
-          text = extractOutputText(response);
-          sources = captureSourceLinks(response);
+        const choice = response.choices?.[0];
+        const text: string = typeof choice?.message?.content === "string" ? choice.message.content : "";
+        event.summary = text.trim().slice(0, 1000);
+
+        // Extract URL citations from annotations.
+        // The SDK returns: {type:"url_citation", url_citation:{url,title,...}}
+        // Older SDK versions may also surface {type:"url_citation", url, title} directly.
+        const annotations: any[] = Array.isArray(choice?.message?.annotations)
+          ? choice.message.annotations
+          : [];
+        for (const ann of annotations) {
+          if (ann.type !== "url_citation") continue;
+          const url: string = ann.url_citation?.url ?? ann.url ?? "";
+          const title: string | undefined = ann.url_citation?.title ?? ann.title;
+          if (url && !event.sources.some((s) => s.url === url)) {
+            event.sources.push({ url, title: typeof title === "string" ? title : undefined });
+          }
         }
 
-        const structured = parseStructuredJson(text);
-        const summary =
-          typeof structured?.summary === "string" && structured.summary.trim().length > 0
-            ? structured.summary.trim()
-            : text;
-
-        if (input.taskId) {
-          const existing = opts.webSearchByTaskId.get(input.taskId) ?? [];
-          existing.push({
-            query: input.query,
-            targetLocale: input.targetLocale ?? undefined,
-            summary: summary ?? "",
-            sources,
-          });
-          opts.webSearchByTaskId.set(input.taskId, existing);
-        } else {
-          opts.fallbackWebSearchEvents.push({
-            query: input.query,
-            targetLocale: input.targetLocale ?? undefined,
-            summary: summary ?? "",
-            sources,
-          });
+        // Fallback: pull any bare https:// URLs out of the response text.
+        if (event.sources.length === 0) {
+          const urlMatches = text.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? [];
+          for (const raw of urlMatches) {
+            const url = raw.replace(/[.,;:]+$/, "");
+            if (url && !event.sources.some((s) => s.url === url)) event.sources.push({ url });
+          }
         }
-
-        return summary ?? "(no results)";
-      } catch {
-        return "(web search unavailable — treat webScore as 0.6 for a single uncertain source)";
+      } catch (e) {
+        event.summary = "(web search failed)";
+        process.stderr.write(`[WebSearch] ${(e as Error).message ?? String(e)}\n`);
       }
+
+      if (input.taskId) {
+        const existing = opts.webSearchByTaskId.get(input.taskId) ?? [];
+        existing.push(event);
+        opts.webSearchByTaskId.set(input.taskId, existing);
+      } else {
+        opts.fallbackWebSearchEvents.push(event);
+      }
+
+      if (event.sources.length > 0) {
+        return `${event.summary}\n\nSources: ${event.sources.map((s) => s.url).join(", ")}`;
+      }
+      return event.summary || "(web search unavailable — treat webScore as 0.6 for a single uncertain source)";
     },
   });
 
@@ -358,6 +301,8 @@ async function runAnthropic(opts: {
   taskCount: number;
   server: import("@anthropic-ai/claude-agent-sdk").McpSdkServerConfigWithInstance;
   toolNames: string[];
+  webSearchByTaskId: Map<string, HtmlWebSearchEvent[]>;
+  fallbackWebSearchEvents: HtmlWebSearchEvent[];
   quiet: boolean;
 }) {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
@@ -382,14 +327,79 @@ async function runAnthropic(opts: {
 
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
 
+  // Maps tool_use_id → { query, taskId, targetLocale } for in-flight WebSearch calls.
+  const pendingWebSearches = new Map<string, { query: string; taskId?: string; targetLocale?: string }>();
+
   for await (const message of q) {
     if (message.type === "assistant") {
-      const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
+      const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string; id?: string; input?: Record<string, unknown> }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) {
           out(block.text);
         } else if (block.type === "tool_use" && block.name) {
           out(`  → [tool] ${block.name}\n`);
+          // Capture WebSearch calls so we can match their results when the tool_result arrives.
+          if ((block.name === "WebSearch" || block.name === "web_search") && block.id) {
+            const input = block.input ?? {};
+            pendingWebSearches.set(block.id, {
+              query: String(input.query ?? ""),
+              taskId: typeof input.taskId === "string" ? input.taskId : undefined,
+              targetLocale: typeof input.targetLocale === "string" ? input.targetLocale : undefined,
+            });
+          }
+        }
+      }
+    } else if (message.type === "user") {
+      // Tool results arrive as user messages. Match them to pending WebSearch calls and capture telemetry.
+      const msgContent = (message.message as any).content;
+      const blocks: any[] = Array.isArray(msgContent) ? msgContent : [];
+      for (const block of blocks) {
+        if (block.type !== "tool_result") continue;
+        const pending = pendingWebSearches.get(block.tool_use_id);
+        if (!pending) continue;
+        pendingWebSearches.delete(block.tool_use_id);
+
+        // Extract text from result content (may be a string or an array of content blocks).
+        const resultContent = block.content;
+        const rawText: string = Array.isArray(resultContent)
+          ? resultContent.filter((c: any) => c.type === "text").map((c: any) => String(c.text ?? "")).join(" ")
+          : typeof resultContent === "string" ? resultContent : "";
+        const summary = rawText.trim().slice(0, 1000);
+
+        const sources: Array<{ url: string; title?: string }> = [];
+        // Extract URLs from text content.
+        const urlMatches = rawText.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? [];
+        for (const raw of urlMatches) {
+          const url = raw.replace(/[.,;:]+$/, "");
+          if (url && !sources.some((s) => s.url === url)) sources.push({ url });
+        }
+        // Also check the SDK-provided structured tool_use_result field.
+        const toolResult = (message as any).tool_use_result;
+        if (toolResult && typeof toolResult === "object") {
+          const srcs: any[] = Array.isArray((toolResult as any).sources)
+            ? (toolResult as any).sources
+            : Array.isArray((toolResult as any).results) ? (toolResult as any).results : [];
+          for (const src of srcs) {
+            const url = typeof src?.url === "string" ? src.url : typeof src?.link === "string" ? src.link : "";
+            if (url && !sources.some((s) => s.url === url)) {
+              sources.push({ url, title: typeof src?.title === "string" ? src.title : undefined });
+            }
+          }
+        }
+
+        const event: HtmlWebSearchEvent = {
+          query: pending.query,
+          targetLocale: pending.targetLocale,
+          summary,
+          sources,
+        };
+
+        if (pending.taskId) {
+          const existing = opts.webSearchByTaskId.get(pending.taskId) ?? [];
+          existing.push(event);
+          opts.webSearchByTaskId.set(pending.taskId, existing);
+        } else {
+          opts.fallbackWebSearchEvents.push(event);
         }
       }
     } else if (message.type === "result") {
@@ -644,7 +654,7 @@ async function main() {
       webValidationEnabled: cli.webValidate,
       toolNames,
     });
-    await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames, quiet: cli.json });
+    await runAnthropic({ model, systemPrompt, root: cli.root, webValidate: cli.webValidate, taskCount: tasks.length, server, toolNames, webSearchByTaskId, fallbackWebSearchEvents, quiet: cli.json });
   }
 
   if (finalReport) {
