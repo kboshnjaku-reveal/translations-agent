@@ -287,8 +287,14 @@ async function runAnthropicGroup(opts: {
       }
     } else if (message.type === "result") {
       const r = message as any;
-      usage.inputTokens = r.usage?.inputTokens ?? usage.inputTokens;
-      usage.outputTokens = r.usage?.outputTokens ?? usage.outputTokens;
+      const u = r.usage ?? {};
+      const inputTokens =
+        (u.input_tokens ?? 0) +
+        (u.cache_read_input_tokens ?? 0) +
+        (u.cache_creation_input_tokens ?? 0);
+      const outputTokens = u.output_tokens ?? 0;
+      usage.inputTokens += inputTokens;
+      usage.outputTokens += outputTokens;
       if (message.subtype !== "success") {
         console.error(`\nAgent ended with: ${message.subtype}`);
       }
