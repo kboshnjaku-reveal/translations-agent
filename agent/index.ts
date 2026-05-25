@@ -15,6 +15,7 @@ import { writeHtmlReport } from "./html-report.js";
 import type { HtmlWebSearchEvent, ReportStats, KeyGroupResponse } from "./tools-core.js";
 import { buildGlossary, mergeWithSeed, findExactMatch, type GlossaryEntry } from "../lib/glossary.js";
 import { runBatchWebSearch } from "./web-search-batch.js";
+import { runAnthropicBatchWebSearch } from "./anthropic-web-search-batch.js";
 
 type TokenUsage = { inputTokens: number; outputTokens: number };
 
@@ -482,7 +483,11 @@ async function main() {
     fallbackWebSearchEvents,
     webSearcher: cli.webValidate
       ? async (queries: Array<{ taskId: string; targetLocale: string; query: string }>) => {
-          await runBatchWebSearch(queries, webSearchByTaskId);
+          if (provider === "anthropic") {
+            await runAnthropicBatchWebSearch(queries, webSearchByTaskId);
+          } else {
+            await runBatchWebSearch(queries, webSearchByTaskId);
+          }
         }
       : undefined,
     glossary: glossary.length > 0 ? glossary : undefined,
