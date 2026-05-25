@@ -209,7 +209,6 @@ async function runAnthropicGroup(opts: {
   systemPrompt: string;
   group: object;
   server: import("@anthropic-ai/claude-agent-sdk").McpSdkServerConfigWithInstance;
-  root: string;
   quiet: boolean;
 }): Promise<TokenUsage> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
@@ -219,11 +218,11 @@ async function runAnthropicGroup(opts: {
   const q = query({
     prompt,
     options: {
-      cwd: opts.root,
       model: opts.model,
       systemPrompt: opts.systemPrompt,
       mcpServers: { localizer: opts.server },
       allowedTools: ["mcp__localizer__commit_bundle"],
+      tools: [],
       maxTurns: 5,
     },
   });
@@ -290,7 +289,6 @@ async function runAnthropicGroup(opts: {
       const u = r.usage ?? {};
       const inputTokens =
         (u.input_tokens ?? 0) +
-        (u.cache_read_input_tokens ?? 0) +
         (u.cache_creation_input_tokens ?? 0);
       const outputTokens = u.output_tokens ?? 0;
       usage.inputTokens += inputTokens;
@@ -638,7 +636,7 @@ async function main() {
       }
 
       info(`  [group ${groupNum}/${groupCount}] translating…`);
-      const usage = await runAnthropicGroup({ model, systemPrompt: groupSystemPrompt, group, server, root: cli.root, quiet: cli.json });
+      const usage = await runAnthropicGroup({ model, systemPrompt: groupSystemPrompt, group, server, quiet: cli.json });
       tokenUsage.inputTokens += usage.inputTokens;
       tokenUsage.outputTokens += usage.outputTokens;
     }

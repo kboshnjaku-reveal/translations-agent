@@ -32,13 +32,6 @@ export function buildAnthropicServer(deps: ServerDeps) {
 
   const allTools = [
     tool(
-      "next_key_group",
-      "Dequeue the next key group from the work queue. Returns {group, remaining} where group is null when the queue is drained. The group includes all pre-computed context: normalized source text, placeholder list, domain classification, and per-locale data (rules, placement constraints, translation memory). Process all locales in the group in a single reasoning turn, then call commit_bundle once.",
-      {},
-      async () => wrapResult(await h.nextKeyGroup()),
-    ),
-
-    tool(
       "commit_bundle",
       "Persist translation updates for a single bundle. Call ONCE per key group with one entry in `updates` for every locale you translated. The server validates placeholder structure and locale rules, scores confidence, and overrides needsReview to true when confidence is low (escalate or mandatory tier). Set needsReview=true if you have specific quality concerns; the server may also set it independently. Use this — never use raw Write on locale JSON.",
       {
@@ -68,12 +61,6 @@ export function buildAnthropicServer(deps: ServerDeps) {
       }) => wrapResult(await h.commitBundle({ bundleId, updates })),
     ),
 
-    tool(
-      "emit_report",
-      "Emit the final localization report. Call this exactly once after next_key_group returns a null group.",
-      {},
-      async () => wrapResult(await h.emitReport()),
-    ),
   ];
 
   const toolNames = allTools.map((t) => `mcp__localizer__${t.name}`);
