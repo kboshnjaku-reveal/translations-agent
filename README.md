@@ -45,7 +45,7 @@ The agent prompts for confirmation before writing anything. Pass `--yes` to skip
 | `--yes`, `-y` | Skip the interactive permission prompt. Use for unattended runs (CI, scripts). |
 | `--json` | Emit the final report as JSON on stdout. Progress and tool-call narration are routed to stderr. |
 | `--no-web-validate` | Disable web search validation for ambiguous or legal phrases (enabled by default). |
-| `--no-glossary` | Disable glossary matching (useful for testing raw model output). |
+| `--glossary` | Build a translation glossary from existing locale files during pre-flight. Keys with a single exact match across all target locales skip the AI call entirely (score 100%, no web search). |
 | `--source-locale <code>` | Override auto-detection of the source language (e.g. `--source-locale en-US`). |
 | `--root <path>` | Operate on a directory other than the current working directory. |
 | `--model <name>` | Use a specific model. Defaults to `gpt-4o-mini` (OpenAI) or `claude-opus-4-7` (Anthropic). |
@@ -90,6 +90,9 @@ translations-agent --no-resume
 - Preserves placeholders (`{{var}}`, `{var}`, `${var}`, `%s`, `%d`), ICU plural/select syntax, HTML tags, and escape sequences.
 - Applies per-locale grammar rules (formality, spelling, anti-patterns) defined in `data/locale-rules.json`.
 - Scores each translation; low-confidence translations get a sibling `<key>__needsReview: true` flag rather than being dropped.
+- Builds a translation glossary from existing locale files when `--glossary` is set.
+  Keys whose source value exactly matches a glossary entry across every target locale
+  are committed directly without an AI call, scored at 100% confidence.
 - Saves a checkpoint after each key group so a crashed or interrupted run can resume where it left off.
 - Writes atomically (tmp + rename), so a crash mid-write leaves the original file intact.
 - Writes a token usage ledger to `.translations-agent-usage.json` in your repo root.

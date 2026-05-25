@@ -6,6 +6,7 @@ import { commitBundleUpdates, type Update } from "./locale-writer.js";
 import { getDeep } from "../lib/flatten-json.js";
 import type { Bundle } from "./repository.js";
 import type { Task, Placement } from "./work-queue.js";
+import type { GlossaryEntry } from "../lib/glossary.js";
 
 // ── Shared types ───────────────────────────────────────────────────────────────
 
@@ -34,6 +35,12 @@ export type ServerDeps = {
    */
   webSearcher?: (queries: Array<{ taskId: string; targetLocale: string; query: string }>) => Promise<void>;
   log: (msg: string) => void;
+  glossary?: GlossaryEntry[];
+  /**
+   * Task IDs that were pre-resolved from the glossary. commitBundle skips
+   * scoreConfidence, validateLocale, and web search for these.
+   */
+  resolvedFromGlossary?: Set<string>;
 };
 
 export type ReportStats = {
@@ -196,6 +203,13 @@ function buildHint(rules: Record<string, unknown>): string {
 // ── Handler factory ────────────────────────────────────────────────────────────
 
 export function makeHandlers(deps: ServerDeps): ToolHandlers {
+  const GLOSSARY_CONFIDENCE: HtmlConfidence = {
+    total: 1.0,
+    tier: "auto",
+    webScore: null,
+    components: { web: 0, locale: 1.0, structure: 1.0 },
+  };
+
   type TaskTelemetry = {
     localeValidation?: HtmlLocaleValidation;
     confidence?: HtmlConfidence;
@@ -373,6 +387,21 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
 
       // Server-side validation + scoring; override needsReview when confidence is low
       const scoredUpdates = updates.map((u) => {
+        const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
+        const isGlossaryResolved = task
+          ? (deps.resolvedFromGlossary?.has(task.taskId) ?? false)
+          : false;
+
+        if (isGlossaryResolved) {
+          if (task) {
+            upsertTelemetry(task.taskId, {
+              localeValidation: { valid: true, score: 1.0, issues: [] },
+              confidence: GLOSSARY_CONFIDENCE,
+            });
+          }
+          return { ...u, needsReview: false };
+        }
+
         const source = sourceByKey.get(u.keyPath) ?? "";
         const structureCheck = comparePlaceholders(source, u.value);
         const localeResult = validateLocale(u.value, u.targetLocale);
@@ -386,7 +415,6 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         structureCheck.extra.forEach(() => allIssues.push({ code: "PLACEHOLDER_EXTRA" }));
         if (structureCheck.reordered) allIssues.push({ code: "PLACEHOLDER_REORDERED" });
 
-        const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
         if (task) {
           upsertTelemetry(task.taskId, {
             localeValidation: {
@@ -427,7 +455,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         const queries: Array<{ taskId: string; targetLocale: string; query: string }> = [];
         for (const u of scoredUpdates) {
           const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
-          if (task) {
+          if (task && !(deps.resolvedFromGlossary?.has(task.taskId))) {
             queries.push({
               taskId: task.taskId,
               targetLocale: u.targetLocale,
@@ -442,6 +470,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       for (const u of scoredUpdates) {
         const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
         if (task) {
+          const isGlossaryResolved = deps.resolvedFromGlossary?.has(task.taskId) ?? false;
           const group = ensureGroup(task);
           const taskTelemetry = telemetry.get(task.taskId);
           group.locales.set(u.targetLocale, {
@@ -452,7 +481,9 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
             confidence: taskTelemetry?.confidence ?? null,
             localeValidation: taskTelemetry?.localeValidation ?? null,
             alternatives: [],
-            webValidationNote: "Web validation is evidence-only; results appear in the report but do not affect the confidence score.",
+            webValidationNote: isGlossaryResolved
+              ? "Resolved from glossary — AI call skipped. Score is 100% from glossary match."
+              : "Web validation is evidence-only; results appear in the report but do not affect the confidence score.",
             webValidation: buildWebValidation(task.taskId),
           });
         }

@@ -142,6 +142,27 @@ export function mergeWithSeed(autoBuilt: GlossaryEntry[], seed: GlossaryEntry[])
   return final;
 }
 
+export function findExactMatch(
+  glossary: GlossaryEntry[],
+  text: string,
+  targetLocale: string,
+): string | null {
+  const needle = normalize(text);
+  const base = targetLocale.split("-")[0] ?? targetLocale;
+
+  for (const entry of glossary) {
+    if (normalize(entry.source) !== needle) continue;
+
+    if (entry.keepEnglish) return text;
+
+    const translation =
+      entry.translations[targetLocale] ?? entry.translations[base];
+    return translation ?? null;
+  }
+
+  return null;
+}
+
 export function findMatches(glossary: GlossaryEntry[], text: string, targetLocale: string): GlossaryMatch[] {
   const matches: GlossaryMatch[] = [];
   const consumedRanges: Array<[number, number]> = [];

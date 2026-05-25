@@ -12,7 +12,8 @@ import { buildGroupSystemPrompt } from "./system-prompt.js";
 import { buildOpenAITools } from "./tools-openai.js";
 import { buildAnthropicServer } from "./tools-anthropic.js";
 import { writeHtmlReport } from "./html-report.js";
-import type { HtmlWebSearchEvent, ReportStats } from "./tools-core.js";
+import type { HtmlWebSearchEvent, ReportStats, KeyGroupResponse } from "./tools-core.js";
+import { buildGlossary, mergeWithSeed, findExactMatch, type GlossaryEntry } from "../lib/glossary.js";
 import { runBatchWebSearch } from "./web-search-batch.js";
 
 type TokenUsage = { inputTokens: number; outputTokens: number };
@@ -37,6 +38,7 @@ type Cli = {
   json: boolean;
   noResume: boolean;
   htmlReport: boolean;
+  glossary: boolean;
 };
 
 function parseArgs(argv: string[]): Cli {
@@ -49,6 +51,7 @@ function parseArgs(argv: string[]): Cli {
     json: false,
     noResume: false,
     htmlReport: true,
+    glossary: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -62,6 +65,7 @@ function parseArgs(argv: string[]): Cli {
     else if (a === "--json") cli.json = true;
     else if (a === "--no-resume") cli.noResume = true;
     else if (a === "--no-html-report") cli.htmlReport = false;
+    else if (a === "--glossary") cli.glossary = true;
   }
   return cli;
 }
@@ -85,6 +89,9 @@ Options:
   --no-html-report            Skip writing the HTML run report (enabled by default)
   --no-resume                 Skip loading a saved checkpoint and start from the beginning.
                               Progress is still saved for future resume unless --dry-run is set.
+  --glossary                  Build a glossary from existing locale files during pre-flight.
+                              If every target locale for a key has an exact match, the AI call
+                              is skipped and the glossary translation is used directly (score 100%).
   --help, -h                  Show this help message
 
 Provider selection (set one key in your .env or environment):
@@ -292,6 +299,22 @@ function printReport(r: ReportStats) {
   console.log(`Run the agent again after future repository changes.`);
 }
 
+// ── Glossary bypass helper ─────────────────────────────────────────────────────
+
+function resolveGroupFromGlossary(
+  group: { bundleId: string; keyPath: string; locales: Array<{ taskId: string; targetLocale: string }> },
+  sourceValue: string,
+  glossary: GlossaryEntry[],
+): Array<{ taskId: string; targetLocale: string; value: string }> | null {
+  const resolved: Array<{ taskId: string; targetLocale: string; value: string }> = [];
+  for (const locale of group.locales) {
+    const match = findExactMatch(glossary, sourceValue, locale.targetLocale);
+    if (match === null) return null;
+    resolved.push({ taskId: locale.taskId, targetLocale: locale.targetLocale, value: match });
+  }
+  return resolved;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -420,6 +443,27 @@ async function main() {
 
   info(`  Work queue: ${tasks.length} task(s) (cartesian product of changes × target locales).`);
 
+  let glossary: GlossaryEntry[] = [];
+  if (cli.glossary) {
+    info("  Building glossary from existing locale files…");
+    const localeEntries: import("../lib/glossary.js").LocaleEntries[] = [];
+    for (const bundle of bundles) {
+      localeEntries.push({ locale: bundle.sourceLocale, entries: bundle.sourceFile.entries });
+      for (const t of bundle.targets) {
+        localeEntries.push({ locale: t.locale, entries: t.entries });
+      }
+    }
+    const autoBuilt = buildGlossary(localeEntries, bundles[0]?.sourceLocale ?? "en");
+    const seedPath = path.resolve(__dirname, "..", "data", "glossary-seed.json");
+    let seed: GlossaryEntry[] = [];
+    try {
+      const raw = await fs.readFile(seedPath, "utf8");
+      seed = JSON.parse(raw) as GlossaryEntry[];
+    } catch { /* no seed file — that's fine */ }
+    glossary = mergeWithSeed(autoBuilt, seed);
+    info(`  Glossary: ${glossary.length} entries`);
+  }
+
   const localeRulesPath = path.resolve(__dirname, "..", "data", "locale-rules.json");
   const localeRulesRaw = await fs.readFile(localeRulesPath, "utf8");
   const localeRules = JSON.parse(localeRulesRaw) as Record<string, unknown>;
@@ -441,6 +485,8 @@ async function main() {
           await runBatchWebSearch(queries, webSearchByTaskId);
         }
       : undefined,
+    glossary: glossary.length > 0 ? glossary : undefined,
+    resolvedFromGlossary: glossary.length > 0 ? new Set<string>() : undefined,
     // Route MCP handler logs through `info` so they respect --json mode.
     log: (msg: string) => info(`  ${msg}`),
     onGroupCommitted: checkpoint
@@ -476,9 +522,28 @@ async function main() {
     const { handlers, commitTool } = buildOpenAITools(commonDeps);
     let groupNum = 0;
     while (true) {
-      const { group } = JSON.parse(await handlers.nextKeyGroup()) as { group: object | null };
+      const { group } = JSON.parse(await handlers.nextKeyGroup()) as { group: (KeyGroupResponse & { newValue: string }) | null };
       if (!group) break;
       groupNum++;
+
+      if (glossary.length > 0) {
+        const preResolved = resolveGroupFromGlossary(group, group.newValue, glossary);
+        if (preResolved) {
+          info(`  [group ${groupNum}/${groupCount}] glossary bypass (${preResolved.length} locale(s))`);
+          for (const r of preResolved) commonDeps.resolvedFromGlossary!.add(r.taskId);
+          await handlers.commitBundle({
+            bundleId: group.bundleId,
+            updates: preResolved.map((r) => ({
+              targetLocale: r.targetLocale,
+              keyPath: group.keyPath,
+              value: r.value,
+              needsReview: false,
+            })),
+          });
+          continue;
+        }
+      }
+
       info(`  [group ${groupNum}/${groupCount}] translating…`);
       const usage = await runOpenAIGroup({ model, systemPrompt: groupSystemPrompt, group, commitTool, quiet: cli.json });
       tokenUsage.inputTokens += usage.inputTokens;
@@ -489,9 +554,28 @@ async function main() {
     const { server, handlers } = buildAnthropicServer(commonDeps);
     let groupNum = 0;
     while (true) {
-      const { group } = JSON.parse(await handlers.nextKeyGroup()) as { group: object | null };
+      const { group } = JSON.parse(await handlers.nextKeyGroup()) as { group: (KeyGroupResponse & { newValue: string }) | null };
       if (!group) break;
       groupNum++;
+
+      if (glossary.length > 0) {
+        const preResolved = resolveGroupFromGlossary(group, group.newValue, glossary);
+        if (preResolved) {
+          info(`  [group ${groupNum}/${groupCount}] glossary bypass (${preResolved.length} locale(s))`);
+          for (const r of preResolved) commonDeps.resolvedFromGlossary!.add(r.taskId);
+          await handlers.commitBundle({
+            bundleId: group.bundleId,
+            updates: preResolved.map((r) => ({
+              targetLocale: r.targetLocale,
+              keyPath: group.keyPath,
+              value: r.value,
+              needsReview: false,
+            })),
+          });
+          continue;
+        }
+      }
+
       info(`  [group ${groupNum}/${groupCount}] translating…`);
       const usage = await runAnthropicGroup({ model, systemPrompt: groupSystemPrompt, group, server, root: cli.root, quiet: cli.json });
       tokenUsage.inputTokens += usage.inputTokens;
