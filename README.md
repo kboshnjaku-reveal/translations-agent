@@ -41,15 +41,16 @@ The agent prompts for confirmation before writing anything. Pass `--yes` to skip
 
 | Flag | What it does |
 |---|---|
-| `--dry-run` | Run the full pipeline (model calls, validation, scoring) but skip the final disk writes. Report stats are still produced. |
+| `--dry-run` | Run the full pipeline (model calls, validation, scoring) but skip the final disk writes. Report stats are still produced. Progress is not checkpointed in dry-run mode. |
 | `--yes`, `-y` | Skip the interactive permission prompt. Use for unattended runs (CI, scripts). |
 | `--json` | Emit the final report as JSON on stdout. Progress and tool-call narration are routed to stderr. |
 | `--no-web-validate` | Disable web search validation for ambiguous or legal phrases (enabled by default). |
 | `--no-glossary` | Disable glossary matching (useful for testing raw model output). |
 | `--source-locale <code>` | Override auto-detection of the source language (e.g. `--source-locale en-US`). |
 | `--root <path>` | Operate on a directory other than the current working directory. |
-| `--model <name>` | Use a specific model. Defaults to `gpt-4o` (OpenAI) or `claude-opus-4-7` (Anthropic). |
+| `--model <name>` | Use a specific model. Defaults to `gpt-4o-mini` (OpenAI) or `claude-opus-4-7` (Anthropic). |
 | `--no-html-report` | Disable HTML report generation. By default, each run writes `reports/translation-report-YYYYMMDD-HHMMSS.html`. |
+| `--no-resume` | Skip loading a saved checkpoint and start from scratch. Progress is still checkpointed for future runs unless `--dry-run` is also set. |
 | `--help`, `-h` | Print the help message. |
 
 ### Examples
@@ -72,6 +73,9 @@ translations-agent --root ../my-app
 
 # Force a specific source locale and disable web validation
 translations-agent --source-locale en-US --no-web-validate
+
+# Start from scratch, ignoring any saved checkpoint
+translations-agent --no-resume
 ```
 
 ---
@@ -82,10 +86,13 @@ translations-agent --source-locale en-US --no-web-validate
 
 - Detects added and modified keys in your source-locale JSON since `HEAD`.
 - Translates each changed key into every target locale present in the same directory.
+- Processes all target locales for a given key in a single AI reasoning turn (efficient batching).
 - Preserves placeholders (`{{var}}`, `{var}`, `${var}`, `%s`, `%d`), ICU plural/select syntax, HTML tags, and escape sequences.
 - Applies per-locale grammar rules (formality, spelling, anti-patterns) defined in `data/locale-rules.json`.
 - Scores each translation; low-confidence translations get a sibling `<key>__needsReview: true` flag rather than being dropped.
+- Saves a checkpoint after each key group so a crashed or interrupted run can resume where it left off.
 - Writes atomically (tmp + rename), so a crash mid-write leaves the original file intact.
+- Writes a token usage ledger to `.translations-agent-usage.json` in your repo root.
 
 **Does not:**
 
@@ -105,6 +112,7 @@ After a run, the CLI prints a report showing:
 - Total changed keys, translated automatically, flagged for review.
 - Updated files.
 - Review queue — keys written with `__needsReview: true` and the reason.
+- Token usage for this run and cumulative totals.
 
 A confidence score below 0.85 produces an `__needsReview: true` sibling key. The translation is still written (best-effort), but you should treat it as a draft. Search your locales for `__needsReview` after a run, fix or accept each one, and delete the flag.
 
@@ -141,6 +149,16 @@ In `--json` mode, the same data lands on stdout as a single JSON object — usef
 
 ---
 
+## Checkpoint and resume
+
+Each non-dry-run execution saves a checkpoint to `.translations-agent/state.json` in your target repository. If a run is interrupted (crash, timeout, Ctrl-C), the next run automatically picks up from where it left off — already-translated key groups are skipped.
+
+The checkpoint is tied to the current HEAD commit and source file contents. If you commit new changes or edit the source locale between runs, the checkpoint is discarded and the run starts fresh.
+
+Use `--no-resume` to force a full restart regardless of any saved checkpoint.
+
+---
+
 ## Security model
 
 The agent runs against your real filesystem and your git config, so the tool was built with the principle of least privilege:
@@ -159,11 +177,12 @@ The agent runs against your real filesystem and your git config, so the tool was
 | Symptom | Where to look |
 |---|---|
 | Translations look wrong | Check `data/locale-rules.json` for the target locale — the agent relies on those rules. |
-| Agent skips pipeline steps | Look for `MISSING_TRACE_TOKEN` in the output — a tool call was made without the required prior step. |
 | `commit_bundle` keeps rejecting | A `{{placeholder}}` was lost during translation. Inspect the source file and the rejection reason. |
-| Unexpected work queue | The queue is printed to stderr at the end of pre-flight, before the agent launches. Inspect it there. |
+| Unexpected work queue | The queue size is printed to stderr at the end of pre-flight, before the agent loop starts. |
 | Provider not selected | Confirm the correct key is exported. Both keys set triggers the interactive choice prompt — pass `--yes` after first time. |
-| `Agent finished without emitting a report` | The agent exited before calling `emit_report`. Usually means it hit `maxTurns`. Re-run; long queues may need splitting. |
+| `Agent finished without emitting a report` | The agent exited before calling `commit_bundle` (or called it without a result). Usually means `maxTurns` (5) was exhausted for a group. Re-run; if it persists, check `--dry-run` output for that group. |
+| Checkpoint not resuming | HEAD SHA or a source file changed since the last run — the stale checkpoint is deleted automatically and a fresh run begins. |
+| Run starts over unexpectedly | Check if `--no-resume` or `--dry-run` is set; both skip checkpoint loading. |
 
 ---
 

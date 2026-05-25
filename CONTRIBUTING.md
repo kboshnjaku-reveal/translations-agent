@@ -35,6 +35,7 @@ npm run dev          # run via tsx, no build step
 npm run typecheck    # tsc --noEmit
 npm run build        # tsc + copy data/ and prompts/ into dist/
 npm start            # alias for dev
+npm test             # node --test --import tsx/esm test/**/*.test.ts
 ```
 
 `npm run build` produces a publishable layout in `dist/`. The `scripts/copy-assets.mjs` step is required because `tsc` only emits TypeScript output — runtime assets (`data/`, `prompts/`) have to be mirrored alongside the compiled JS so the binary can resolve them at install time.
@@ -46,20 +47,34 @@ npm start            # alias for dev
 ```
 translations-agent/
 ├── agent/
-│   ├── index.ts            CLI entry — flag parsing, pre-flight, provider selection, agent launch
-│   ├── tools-core.ts       Shared MCP handler logic + type definitions
+│   ├── index.ts            CLI entry — flag parsing, pre-flight, checkpoint, per-group agent loop, token ledger
+│   ├── tools.ts            Re-export shim — delegates to tools-openai.ts or tools-anthropic.ts
+│   ├── tools-core.ts       Shared handler logic + type definitions (Task, Update, ReportStats, HTML types)
 │   ├── tools-openai.ts     OpenAI tool builder (Zod schemas + @openai/agents tool() wrappers)
 │   ├── tools-anthropic.ts  Anthropic tool builder (createSdkMcpServer)
-│   ├── system-prompt.ts    Stitches prompts/*.md + run context into the agent's instructions
+│   ├── system-prompt.ts    buildGroupSystemPrompt (active) + buildSystemPrompt (legacy)
 │   ├── repository.ts       Scans the repo for locale bundles
 │   ├── git.ts              Computes changed source-locale keys via simple-git
-│   ├── work-queue.ts       Materialises (key × locale) tasks with cached pre-computation
-│   └── locale-writer.ts    Atomic JSON merge + tmp/rename — the ONLY code that writes locale files
-├── lib/                    Pure functions (placeholders, glossary, classifier, scorer, validator, trace)
+│   ├── work-queue.ts       Materialises (key × locale) tasks with pre-computed normalization/classification
+│   ├── locale-writer.ts    Atomic JSON merge + tmp/rename — the ONLY code that writes locale files
+│   ├── html-report.ts      Generates self-contained HTML run reports
+│   └── web-search-batch.ts Batch OpenAI web search for web validation (all locales in a group at once)
+├── lib/
+│   ├── flatten-json.ts     flatten(), setDeep(), getDeep()
+│   ├── placeholders.ts     maskPlaceholders(), unmaskPlaceholders(), comparePlaceholders()
+│   ├── glossary.ts         buildGlossary(), findMatches()
+│   ├── domain-classifier.ts classifyDomain()
+│   ├── confidence-scorer.ts scoreConfidence()
+│   ├── locale-validator.ts  validateLocale()
+│   ├── trace.ts            TraceRegistry — pipeline step tokens (reserved for future use)
+│   └── checkpoint.ts       loadCheckpoint, saveCheckpoint, deleteCheckpoint, isCheckpointValid
 ├── prompts/                Markdown templates composed into the system prompt
 ├── data/                   Static glossary seed and per-locale rules
 ├── scripts/                Build helpers and smoke tests
-└── fixtures/sample-repo/   Minimal git repo used by the smoke tests
+├── test/
+│   ├── lib/                Unit tests for all lib/ modules
+│   └── integration/        Integration tests for locale-writer and preflight pipeline
+└── fixtures/sample-repo/   Minimal git repo used by smoke tests and integration tests
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the file-by-file map of every export and the key invariants the codebase relies on.
@@ -73,12 +88,17 @@ See [CLAUDE.md](CLAUDE.md) for the file-by-file map of every export and the key 
    - `git.detectChangedKeys` diffs each source locale file against `HEAD` and emits `{keyPath, oldValue, newValue, status}` per change.
    - `work-queue.buildWorkQueue` produces tasks (cartesian product of changes × target locales), caching `maskPlaceholders` and `classifyDomain` once per source key.
    - `lib/glossary.buildGlossary` mines a project-specific glossary from existing translations and merges with `data/glossary-seed.json`.
-2. **Agent loop** (one `run()` / `query()` call):
-   - The agent dequeues key groups via `next_key_group`. A group is one source key plus every target locale that needs it translated.
-   - Shared steps (`normalize_text`, `classify_domain`) run once per group; per-locale steps (`search_glossary`, `get_locale_rules`, `validate_translation`, `score_confidence`) run once per locale.
-   - All M locale translations are produced in a single reasoning turn, then validated and scored individually.
-   - One `commit_bundle` call per group persists all M updates atomically.
-3. **Termination:** when `next_key_group()` returns `{group: null}`, the agent calls `emit_report` and stops.
+   - Checkpoint is loaded (if `--no-resume` is not set and `--dry-run` is not set) — previously completed groups are filtered from the task list.
+
+2. **Per-group agent loop** (one `run()` / `query()` call per key group):
+   - `index.ts` calls `handlers.nextKeyGroup()` directly to get the next group.
+   - A fresh AI agent is spawned for that group with only `commit_bundle` available (`maxTurns: 5`).
+   - The group payload (normalized text, placeholders, domain, per-locale rules + translation memory) is passed in the prompt.
+   - The agent translates all M locales in one reasoning turn and calls `commit_bundle` once.
+   - `commit_bundle` runs server-side placeholder + locale validation, scores confidence, and writes atomically.
+   - After `commit_bundle`, the group is recorded in the checkpoint and the loop advances.
+
+3. **Termination:** when `handlers.nextKeyGroup()` returns `{group: null}`, `index.ts` calls `handlers.emitReport()` directly and exits.
 
 ---
 
@@ -89,11 +109,11 @@ For **N changed keys × M target locales**, the naive structure does N×M iterat
 | Step | Naive | Key-group |
 |---|---|---|
 | `normalize_text` / `classify_domain` | N×M (recomputed per locale) | N (pre-flight, cached per source key) |
-| `search_glossary` / `get_locale_rules` | N×M | N×M (locale-specific — unchanged) |
-| Model translate round-trips | N×M (one per locale) | N (M translations in one reasoning turn) |
+| Locale rules / translation memory lookup | N×M | N×M (locale-specific — unchanged) |
+| Model translate round-trips | N×M (one per locale) | N (M translations in one reasoning turn per group) |
 | `commit_bundle` calls | N×M | N (M updates batched per call) |
 
-The dominant wall-clock win is collapsing N×M sequential model round-trips into N batched ones. Trace tokens still validate per locale — shared steps fan their token to every group member so each locale's `validate_translation` sees the full chain.
+The dominant wall-clock win is collapsing N×M sequential model round-trips into N batched ones. Each group still gets a fresh agent call (no context leakage), and `commit_bundle` validates and scores per locale server-side.
 
 ---
 
@@ -103,34 +123,33 @@ The dominant wall-clock win is collapsing N×M sequential model round-trips into
 
 1. Add the handler signature to `ToolHandlers` in `agent/tools-core.ts` and implement it inside `makeHandlers`.
 2. Register the tool in **both** providers:
-   - `agent/tools-openai.ts` — wrap with `tool({ name, description, parameters: ZodSchema, execute })`. Use `.nullable().optional()` for optional fields (GPT may pass `null`).
-   - `agent/tools-anthropic.ts` — wrap with `tool(name, description, params, handler)`. Append `mcp__localizer__<name>` to `toolNames`.
-3. If the tool participates in the trace-token chain, add the step to `TraceStep` in `lib/trace.ts` and include it in `REQUIRED_PRE_VALIDATE` if it must run before `validate_translation`.
-4. Document the tool in `prompts/pipeline.md` (the agent only does what the prompt directs).
+   - `agent/tools-openai.ts` — add to `allTools` with `tool({ name, description, parameters: ZodSchema, execute })`. Use `.nullable().optional()` for optional fields (GPT may pass `null`). Pass the new tool to the agent in `index.ts` if you want it exposed.
+   - `agent/tools-anthropic.ts` — add with `tool(name, description, params, handler)`. Add `mcp__localizer__<name>` to `allowedTools` in `index.ts` if you want the agent to use it.
+3. Document the tool in `prompts/role.md` or the inline task instruction in `buildGroupSystemPrompt` (the agent only does what the prompt directs).
 
 ### Adding a new provider
 
 The handler logic in `tools-core.ts` is provider-agnostic. To add a third provider:
 
 1. Create `agent/tools-<provider>.ts` that consumes `makeHandlers(deps)` and wraps each handler in the provider's tool format.
-2. Add a `run<Provider>` function in `agent/index.ts` (model the streaming/event loop on the existing two).
+2. Add a `run<Provider>Group` function in `agent/index.ts` (model the streaming/event loop on the existing two).
 3. Extend `detectProvider` to recognise the new API key.
 
 ### Adding or editing locale rules
 
-Locale-specific grammar, spelling, anti-patterns, and structure rules live in `data/locale-rules.json`. The `get_locale_rules` MCP tool serves these to the agent. Adding a new locale is a JSON edit, no code change. The `lib/locale-validator.ts` checks are separate — extend that file if you need new automated validators (e.g., a new placeholder dialect).
+Locale-specific grammar, spelling, anti-patterns, and structure rules live in `data/locale-rules.json`. The `get_locale_rules` logic is baked into the group payload returned by `nextKeyGroup`. Adding a new locale is a JSON edit, no code change. The `lib/locale-validator.ts` checks are separate — extend that file if you need new automated validators (e.g., a new placeholder dialect).
 
 ### Modifying the prompts
 
-The system prompt is assembled by `agent/system-prompt.ts` from these files (order matters):
+The per-group system prompt is assembled by `agent/system-prompt.ts` from these files:
 
 - `prompts/role.md` — agent identity and constraints
-- `prompts/loop.md` — the main state machine
-- `prompts/pipeline.md` — the 8-step pipeline spec
 - `prompts/placement.md` — per-placement constraints (button length, error tone, etc.)
 - `prompts/safety.md` — non-negotiable invariants
 
-Be conservative with prompt edits — they directly shape agent behaviour, and there is no test suite that catches regressions in agent reasoning today (see #17 in the backlog).
+`prompts/loop.md` and `prompts/pipeline.md` are used only by the legacy `buildSystemPrompt` function.
+
+Be conservative with prompt edits — they directly shape agent behaviour, and regressions in reasoning are hard to catch without end-to-end runs.
 
 ---
 
@@ -144,14 +163,15 @@ Be conservative with prompt edits — they directly shape agent behaviour, and t
 
 ## Testing
 
-Today there are smoke scripts (`scripts/smoke-preflight.ts`, `scripts/smoke-mcp.ts`) but no `npm test`. Unit + golden-fixture tests are tracked as a backlog item. Before opening a PR, run:
-
 ```bash
-npm run typecheck
-npm run build
-npx tsx scripts/smoke-preflight.ts fixtures/sample-repo
-npx tsx scripts/smoke-mcp.ts
+npm test                                              # run all unit + integration tests
+npm run typecheck                                     # type-check without emitting
+npm run build                                         # verify build still compiles
+npx tsx scripts/smoke-preflight.ts fixtures/sample-repo  # smoke-test pre-flight
+npx tsx scripts/smoke-mcp.ts                          # smoke-test MCP handler wiring
 ```
+
+Unit tests live in `test/lib/` and cover every `lib/` module. Integration tests in `test/integration/` exercise the locale writer and the full pre-flight pipeline against `fixtures/sample-repo`.
 
 For changes that affect agent behaviour, run an end-to-end with `--dry-run` against a representative repo and inspect the report.
 
