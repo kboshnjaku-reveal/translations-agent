@@ -231,7 +231,41 @@ async function runAnthropicGroup(opts: {
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-  for await (const message of q) {
+  // Use a manual iterator with a per-turn timeout. The Anthropic agent SDK
+  // sometimes hangs indefinitely after a tool-call result (waiting for the
+  // model's follow-up text), blocking the pipeline. Racing each iter.next()
+  // against a timeout lets us move on without losing the committed work.
+  const TURN_TIMEOUT_MS = 90_000;
+  const iter = q[Symbol.asyncIterator]();
+
+  while (true) {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let iterResult: IteratorResult<unknown>;
+
+    try {
+      iterResult = await Promise.race([
+        iter.next(),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("agent turn timeout")),
+            TURN_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } catch (e) {
+      if ((e as Error).message === "agent turn timeout") {
+        out("\n[agent did not respond after tool call — proceeding]\n");
+        iter.return?.().catch(() => {});
+        break;
+      }
+      throw e;
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+
+    if (iterResult.done) break;
+
+    const message = iterResult.value as { type: string; message?: unknown; subtype?: string };
     if (message.type === "assistant") {
       const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
       for (const block of blocks) {
@@ -554,6 +588,7 @@ async function main() {
       tokenUsage.inputTokens += usage.inputTokens;
       tokenUsage.outputTokens += usage.outputTokens;
     }
+    await handlers.flushWebSearches();
     await handlers.emitReport();
   } else {
     const { server, handlers } = buildAnthropicServer(commonDeps);
@@ -586,6 +621,7 @@ async function main() {
       tokenUsage.inputTokens += usage.inputTokens;
       tokenUsage.outputTokens += usage.outputTokens;
     }
+    await handlers.flushWebSearches();
     await handlers.emitReport();
   }
 

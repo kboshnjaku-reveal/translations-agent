@@ -161,6 +161,7 @@ export type CommitBundleInput = {
 export type ToolHandlers = {
   nextKeyGroup: () => Promise<string>;
   commitBundle: (input: CommitBundleInput) => Promise<string>;
+  flushWebSearches: () => Promise<void>;
   emitReport: () => Promise<string>;
 };
 
@@ -302,6 +303,7 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
     reviewKeys: [] as ReportStats["reviewKeys"],
     htmlGroups: new Map<string, GroupAccumulator>(),
     reportEmitted: false,
+    pendingWebSearches: [] as Array<{ taskId: string; targetLocale: string; query: string }>,
   };
   const remaining = [...deps.tasks];
 
@@ -449,21 +451,20 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         },
       );
 
-      // Run web searches for all locales before building report entries so
-      // buildWebValidation finds populated results in webSearchByTaskId.
+      // Collect web search queries to run after the agent loop, outside the
+      // agent SDK's execution context. Running API calls here can interfere
+      // with the SDK's own connection to Anthropic (rate-limits/hangs).
       if (deps.webSearcher) {
-        const queries: Array<{ taskId: string; targetLocale: string; query: string }> = [];
         for (const u of scoredUpdates) {
           const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
           if (task && !(deps.resolvedFromGlossary?.has(task.taskId))) {
-            queries.push({
+            state.pendingWebSearches.push({
               taskId: task.taskId,
               targetLocale: u.targetLocale,
               query: `${u.value} ${u.targetLocale}`,
             });
           }
         }
-        if (queries.length > 0) await deps.webSearcher(queries);
       }
 
       for (const w of result.written) state.updatedFiles.add(`${bundleId}/${w}`);
@@ -519,6 +520,13 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
       return ok(result);
     },
 
+    flushWebSearches: async () => {
+      if (deps.webSearcher && state.pendingWebSearches.length > 0) {
+        await deps.webSearcher(state.pendingWebSearches);
+        state.pendingWebSearches.length = 0;
+      }
+    },
+
     emitReport: async () => {
       if (state.reportEmitted) return err("Report already emitted for this run.");
       state.reportEmitted = true;
@@ -536,15 +544,22 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
           placement: group.placement,
           locales: [...group.locales.values()]
             .sort((a, b) => a.locale.localeCompare(b.locale))
-            .map((localeResult) => ({
-              ...localeResult,
-              confidence: localeResult.confidence
-                ? {
-                    ...localeResult.confidence,
-                    tier: localeResult.confidence.tier,
-                  }
-                : null,
-            })),
+            .map((localeResult) => {
+              // Re-evaluate webValidation now that flushWebSearches has run
+              // and webSearchByTaskId is fully populated.
+              const taskKey = `${group.bundleId}::${group.keyPath}::${localeResult.locale}`;
+              const task = taskIndex.get(taskKey);
+              return {
+                ...localeResult,
+                webValidation: task ? buildWebValidation(task.taskId) : localeResult.webValidation,
+                confidence: localeResult.confidence
+                  ? {
+                      ...localeResult.confidence,
+                      tier: localeResult.confidence.tier,
+                    }
+                  : null,
+              };
+            }),
         }))
         .sort((a, b) => {
           const bundleCmp = a.bundleId.localeCompare(b.bundleId);
