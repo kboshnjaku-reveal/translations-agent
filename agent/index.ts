@@ -231,18 +231,27 @@ async function runAnthropicGroup(opts: {
   const out = opts.quiet ? () => {} : (s: string) => process.stdout.write(s);
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-  // Use a manual iterator with a per-turn timeout. The Anthropic agent SDK
-  // sometimes hangs indefinitely after a tool-call result (waiting for the
-  // model's follow-up text), blocking the pipeline. Racing each iter.next()
-  // against a timeout lets us move on without losing the committed work.
-  const TURN_TIMEOUT_MS = 90_000;
+  // Manual iterator with a per-turn timeout + heartbeat. The Anthropic agent
+  // SDK can stall after a tool-call result (waiting for the model's closing
+  // text). Racing iter.next() against a timeout lets us move on.
+  const TURN_TIMEOUT_MS = 30_000;
+  const HEARTBEAT_MS = 5_000;
   const iter = q[Symbol.asyncIterator]();
+  let commitBundleCalled = false;
 
   while (true) {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let heartbeatId: ReturnType<typeof setInterval> | undefined;
     let iterResult: IteratorResult<unknown>;
+    const turnStart = Date.now();
 
     try {
+      heartbeatId = setInterval(() => {
+        const elapsed = Math.round((Date.now() - turnStart) / 1000);
+        const ctx = commitBundleCalled ? " after commit_bundle" : "";
+        process.stderr.write(`  [waiting for agent${ctx}… ${elapsed}s]\n`);
+      }, HEARTBEAT_MS);
+
       iterResult = await Promise.race([
         iter.next(),
         new Promise<never>((_, reject) => {
@@ -254,13 +263,14 @@ async function runAnthropicGroup(opts: {
       ]);
     } catch (e) {
       if ((e as Error).message === "agent turn timeout") {
-        out("\n[agent did not respond after tool call — proceeding]\n");
+        process.stderr.write(`  [agent turn timed out after ${TURN_TIMEOUT_MS / 1000}s — proceeding]\n`);
         iter.return?.().catch(() => {});
         break;
       }
       throw e;
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
+      if (heartbeatId !== undefined) clearInterval(heartbeatId);
     }
 
     if (iterResult.done) break;
@@ -270,7 +280,10 @@ async function runAnthropicGroup(opts: {
       const blocks = (message.message as { content: Array<{ type: string; text?: string; name?: string }> }).content;
       for (const block of blocks) {
         if (block.type === "text" && block.text) out(block.text);
-        else if (block.type === "tool_use" && block.name) out(`  → [tool] ${block.name}\n`);
+        else if (block.type === "tool_use" && block.name) {
+          out(`  → [tool] ${block.name}\n`);
+          if (block.name === "mcp__localizer__commit_bundle") commitBundleCalled = true;
+        }
       }
     } else if (message.type === "result") {
       const r = message as any;
@@ -588,7 +601,9 @@ async function main() {
       tokenUsage.inputTokens += usage.inputTokens;
       tokenUsage.outputTokens += usage.outputTokens;
     }
+    info(`\n→ Running deferred web searches…`);
     await handlers.flushWebSearches();
+    info(`→ Building report…`);
     await handlers.emitReport();
   } else {
     const { server, handlers } = buildAnthropicServer(commonDeps);
@@ -621,7 +636,9 @@ async function main() {
       tokenUsage.inputTokens += usage.inputTokens;
       tokenUsage.outputTokens += usage.outputTokens;
     }
+    info(`\n→ Running deferred web searches…`);
     await handlers.flushWebSearches();
+    info(`→ Building report…`);
     await handlers.emitReport();
   }
 

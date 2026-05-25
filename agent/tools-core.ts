@@ -458,10 +458,14 @@ export function makeHandlers(deps: ServerDeps): ToolHandlers {
         for (const u of scoredUpdates) {
           const task = taskIndex.get(`${bundleId}::${u.keyPath}::${u.targetLocale}`);
           if (task && !(deps.resolvedFromGlossary?.has(task.taskId))) {
+            const source = sourceByKey.get(u.keyPath) ?? u.value;
+            const query = source === u.value
+              ? `"${u.value}" ${u.targetLocale} localization terminology`
+              : `"${u.value}" translation of "${source}" ${u.targetLocale} software`;
             state.pendingWebSearches.push({
               taskId: task.taskId,
               targetLocale: u.targetLocale,
-              query: `${u.value} ${u.targetLocale}`,
+              query,
             });
           }
         }
