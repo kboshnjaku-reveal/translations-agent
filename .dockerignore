@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.git/
+.translations-agent/
+fixtures/
+test/
+reports/
+*.log
