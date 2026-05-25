@@ -35,6 +35,25 @@ translations-agent
 
 The agent prompts for confirmation before writing anything. Pass `--yes` to skip the prompt (for CI), or `--dry-run` to preview without writing.
 
+### 4. Running with Podman / Docker (no Node required)
+
+Build the image once from the `translations-agent` directory:
+
+```bash
+podman build -t translations-agent .
+```
+
+Then run it from anywhere by mounting your target repo as a volume:
+
+```bash
+podman run --rm \
+  -v /path/to/your-app:/repo \
+  -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
+  localhost/translations-agent --yes
+```
+
+Use `OPENAI_API_KEY` instead if you prefer the OpenAI provider. The `--yes` flag is required — the interactive confirmation prompt cannot be answered inside a container.
+
 ---
 
 ## Flags

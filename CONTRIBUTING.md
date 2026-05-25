@@ -14,6 +14,16 @@ cp .env.example .env
 # set one API key
 ```
 
+Alternatively, build the container image and skip the Node install entirely:
+
+```bash
+podman build -t translations-agent .
+# Run against any target repo:
+podman run --rm -v /path/to/your-app:/repo -e ANTHROPIC_API_KEY=sk-... localhost/translations-agent --yes
+```
+
+See [README.md § Running with Podman / Docker](README.md#4-running-with-podman--docker-no-node-required) for full details.
+
 Smoke-test the pre-flight pipeline without making any AI calls:
 
 ```bash
