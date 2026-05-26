@@ -4,6 +4,31 @@ A CLI that keeps your app's translation files in sync. Run it inside any git rep
 
 ---
 
+## Quick Setup Guide
+
+No Node required — just Podman (or Docker).
+
+**Step 1 — one-time setup:** clone the repo and build the image:
+
+```bash
+git clone <repo-url>
+cd translations-agent
+podman build -t translations-agent .
+```
+
+**Step 2 — run against any repo** (swap in your path and key):
+
+```bash
+podman run --rm \
+  -v /path/to/your-app:/repo \
+  -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
+  localhost/translations-agent --yes
+```
+
+Use `OPENAI_API_KEY` instead if you prefer the OpenAI provider. The `--yes` flag is required — the container cannot answer interactive prompts.
+
+---
+
 ## Getting started
 
 ### 1. Install
