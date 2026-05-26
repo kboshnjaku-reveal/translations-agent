@@ -8,12 +8,10 @@ A CLI that keeps your app's translation files in sync. Run it inside any git rep
 
 No Node required — just Podman (or Docker).
 
-**Step 1 — one-time setup:** clone the repo and build the image:
+**Step 1 — pull the image** (no clone or build needed):
 
 ```bash
-git clone <repo-url>
-cd translations-agent
-podman build -t translations-agent .
+podman pull ghcr.io/kboshnjaku-reveal/translations-agent:main
 ```
 
 **Step 2 — run against any repo** (swap in your path and key):
@@ -22,7 +20,7 @@ podman build -t translations-agent .
 podman run --rm \
   -v /path/to/your-app:/repo \
   -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
-  localhost/translations-agent --yes
+  ghcr.io/kboshnjaku-reveal/translations-agent:main --yes
 ```
 
 Use `OPENAI_API_KEY` instead if you prefer the OpenAI provider. The `--yes` flag is required — the container cannot answer interactive prompts.
@@ -62,10 +60,10 @@ The agent prompts for confirmation before writing anything. Pass `--yes` to skip
 
 ### 4. Running with Podman / Docker (no Node required)
 
-Build the image once from the `translations-agent` directory:
+Pull the pre-built image from GHCR:
 
 ```bash
-podman build -t translations-agent .
+podman pull ghcr.io/kboshnjaku-reveal/translations-agent:main
 ```
 
 Then run it from anywhere by mounting your target repo as a volume:
@@ -74,7 +72,7 @@ Then run it from anywhere by mounting your target repo as a volume:
 podman run --rm \
   -v /path/to/your-app:/repo \
   -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
-  localhost/translations-agent --yes
+  ghcr.io/kboshnjaku-reveal/translations-agent:main --yes
 ```
 
 Use `OPENAI_API_KEY` instead if you prefer the OpenAI provider. The `--yes` flag is required — the interactive confirmation prompt cannot be answered inside a container.
