@@ -1,6 +1,7 @@
 services:
   agent:
-    image: ghcr.io/kboshnjaku-reveal/translations-agent:main
+    build: .
+    image: translations-agent
     # Mount your target repo into /repo.
     # Set REPO to an absolute path, or run docker compose from inside the target repo (REPO=.).
     # Example: REPO=/path/to/my-app docker compose run --rm agent --yes

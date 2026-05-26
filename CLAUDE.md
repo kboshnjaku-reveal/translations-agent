@@ -178,14 +178,14 @@ Production binary (after build): `translations-agent`
 A `Dockerfile` and `docker-compose.yml` are included. The image is multi-stage (Debian slim): the builder stage compiles TypeScript; the runner stage installs production deps only and adds `git` for `simple-git`.
 
 ```bash
-# Pull the pre-built image from GHCR
-podman pull ghcr.io/kboshnjaku-reveal/translations-agent:main
+# Build the image (one-time, from the repo root)
+podman build -t translations-agent .
 
 # Run against a target repo (replace path and key)
 podman run --rm \
   -v /path/to/your-app:/repo \
   -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
-  ghcr.io/kboshnjaku-reveal/translations-agent:main --yes
+  translations-agent --yes
 
 # Or with podman-compose (set REPO to the absolute path of the target repo)
 REPO=/path/to/your-app podman-compose run --rm agent --yes

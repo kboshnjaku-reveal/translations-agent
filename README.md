@@ -8,13 +8,13 @@ A CLI that keeps your app's translation files in sync. Run it inside any git rep
 
 No Node required — just Podman (or Docker).
 
-**Step 1 — pull the image** (no clone or build needed):
+**Step 1 — clone and build the image:**
 
 ```bash
-podman pull ghcr.io/kboshnjaku-reveal/translations-agent:main
+git clone https://github.com/kboshnjaku-reveal/translations-agent.git
+cd translations-agent
+podman build -t translations-agent .
 ```
-
-The image supports `amd64` and `arm64` (Apple Silicon). If you're on an older version of the image that predates multi-arch support, add `--platform linux/amd64` to the `podman run` command below.
 
 **Step 2 — run against any repo** (swap in your path and key):
 
@@ -22,7 +22,7 @@ The image supports `amd64` and `arm64` (Apple Silicon). If you're on an older ve
 podman run --rm \
   -v /path/to/your-app:/repo \
   -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
-  ghcr.io/kboshnjaku-reveal/translations-agent:main --yes
+  translations-agent --yes
 ```
 
 Use `OPENAI_API_KEY` instead if you prefer the OpenAI provider. The `--yes` flag is required — the container cannot answer interactive prompts.
@@ -62,10 +62,12 @@ The agent prompts for confirmation before writing anything. Pass `--yes` to skip
 
 ### 4. Running with Podman / Docker (no Node required)
 
-Pull the pre-built image from GHCR:
+Clone the repo and build the image once:
 
 ```bash
-podman pull ghcr.io/kboshnjaku-reveal/translations-agent:main
+git clone https://github.com/kboshnjaku-reveal/translations-agent.git
+cd translations-agent
+podman build -t translations-agent .
 ```
 
 Then run it from anywhere by mounting your target repo as a volume:
@@ -74,7 +76,7 @@ Then run it from anywhere by mounting your target repo as a volume:
 podman run --rm \
   -v /path/to/your-app:/repo \
   -e ANTHROPIC_API_KEY=sk-ant-your-key-here \
-  ghcr.io/kboshnjaku-reveal/translations-agent:main --yes
+  translations-agent --yes
 ```
 
 Use `OPENAI_API_KEY` instead if you prefer the OpenAI provider. The `--yes` flag is required — the interactive confirmation prompt cannot be answered inside a container.
