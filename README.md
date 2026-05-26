@@ -14,6 +14,8 @@ No Node required — just Podman (or Docker).
 podman pull ghcr.io/kboshnjaku-reveal/translations-agent:main
 ```
 
+The image supports `amd64` and `arm64` (Apple Silicon). If you're on an older version of the image that predates multi-arch support, add `--platform linux/amd64` to the `podman run` command below.
+
 **Step 2 — run against any repo** (swap in your path and key):
 
 ```bash
