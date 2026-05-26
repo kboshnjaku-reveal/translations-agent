@@ -287,8 +287,6 @@ function renderLocale(locale: HtmlLocaleResult): string {
     <div>
       <strong>Web Validation</strong>
       ${warningHtml}
-      <div class="kv"><strong>Evidence status:</strong> ${escapeHtml(locale.webValidation.evidenceStatus)}</div>
-      <div class="kv"><strong>Evidence origin:</strong> ${escapeHtml(locale.webValidation.evidenceOrigin)}</div>
       <div class="kv"><strong>Source count:</strong> ${locale.webValidation.sourceCount}</div>
       <div class="kv"><strong>Supported:</strong> ${locale.webValidation.supported === null ? "n/a" : locale.webValidation.supported ? "yes" : "no"}</div>
       <div class="small"><strong>Search queries</strong></div>

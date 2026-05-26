@@ -11,7 +11,7 @@ No Node required — just Podman (or Docker).
 **Step 1 — clone and build the image:**
 
 ```bash
-git clone https://github.com/kboshnjaku-reveal/translations-agent.git
+git clone https://github.com/kboshnjaku-reveal/translations-agent
 cd translations-agent
 podman build -t translations-agent .
 ```
