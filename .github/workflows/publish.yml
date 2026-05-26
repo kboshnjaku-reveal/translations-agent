@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - main          # builds (but does NOT push) on PRs so you catch broken Dockerfiles early
+  workflow_dispatch:  # allows manual trigger from the Actions tab
 
 env:
   REGISTRY: ghcr.io
