@@ -1,0 +1,66 @@
+name: Build & publish Docker image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"          # triggers on v0.1.0, v1.2.3, etc.
+  pull_request:
+    branches:
+      - main          # builds (but does NOT push) on PRs so you catch broken Dockerfiles early
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}   # e.g. krist/translations-agent
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write   # needed to push to GHCR
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Extracts metadata (tags + labels) from git context.
+      # On main  → ghcr.io/<repo>:main  +  ghcr.io/<repo>:sha-<short>
+      # On v1.2.3 → ghcr.io/<repo>:1.2.3  +  ghcr.io/<repo>:latest
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'   # don't push on PRs
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Enables multi-platform builds and layer caching
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          # Cache layers between runs so rebuilds are fast
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
