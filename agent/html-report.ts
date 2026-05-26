@@ -54,15 +54,19 @@ h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -0.02em; }
 .group-card > summary {
   list-style: none;
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
   cursor: pointer;
   background: linear-gradient(90deg, #f8fafc, #ffffff 40%);
+  user-select: none;
 }
 .group-card > summary::-webkit-details-marker { display: none; }
+.group-card > summary:hover { background: linear-gradient(90deg, #f0f4f8, #f8fafc 40%); }
+.group-card[open] > summary { border-bottom: 1px solid var(--line); }
 .group-meta { color: var(--muted); font-size: 12px; }
-.locales { padding: 14px 16px 16px; border-top: 1px solid var(--line); }
+.locales { padding: 14px 16px 16px; }
 .locale-card {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -72,12 +76,48 @@ h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -0.02em; }
 .locale-card > summary {
   list-style: none;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
   cursor: pointer;
+  user-select: none;
 }
 .locale-card > summary::-webkit-details-marker { display: none; }
+.locale-card > summary:hover { background: #f4f8ff; border-radius: 10px; }
+.locale-card[open] > summary { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
+.chevron {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+details[open] > summary .chevron { transform: rotate(180deg); }
+.summary-toggle-hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  margin-left: 4px;
+}
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.toolbar button {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.toolbar button:hover { background: #f0f4f8; }
+.toolbar .hint { font-size: 12px; color: var(--muted); }
 .locale-body {
   border-top: 1px solid var(--line);
   padding: 12px;
@@ -216,12 +256,13 @@ function renderLocale(locale: HtmlLocaleResult): string {
   return `
 <details class="locale-card">
   <summary>
-    <div>
+    <svg class="chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 8 10 13 15 8"/></svg>
+    <div style="flex:1;min-width:0;">
       <strong>${escapeHtml(locale.locale)}</strong>
       <span class="badge ${action.key}">${action.label}</span>
       ${locale.needsReview ? '<span class="badge review">Needs Review</span>' : ""}
     </div>
-    <div class="kv">Confidence: <strong>${toPercent(locale.confidence?.total ?? null)}</strong></div>
+    <div class="kv" style="flex-shrink:0;">Confidence: <strong>${toPercent(locale.confidence?.total ?? null)}</strong></div>
   </summary>
   <div class="locale-body">
     <div class="translation">${escapeHtml(locale.translation)}</div>
@@ -273,14 +314,15 @@ function renderGroup(group: HtmlReportGroup): string {
   return `
 <details class="group-card">
   <summary>
-    <div>
+    <svg class="chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 8 10 13 15 8"/></svg>
+    <div style="flex:1;min-width:0;">
       <strong>${escapeHtml(group.keyPath)}</strong>
       <div class="group-meta">
         bundle=${escapeHtml(group.bundleId)} | status=${escapeHtml(group.status)} | placement=${escapeHtml(group.placement)}
       </div>
       <div class="small">${escapeHtml(group.sourceLocale)} source: ${escapeHtml(group.sourceText)}</div>
     </div>
-    <div class="kv">
+    <div class="kv" style="text-align:right;flex-shrink:0;">
       <strong>${group.locales.length}</strong> locale(s)<br>
       <span>${reviewCount} need review</span>
     </div>
@@ -305,8 +347,16 @@ export function buildHtmlReport(report: ReportStats): string {
   const groups = report.htmlReport?.groups ?? [];
   const generatedAt = report.htmlReport?.generatedAt ?? new Date().toISOString();
 
+  const toolbar = groups.length > 0
+    ? `<div class="toolbar">
+        <button onclick="document.querySelectorAll('details').forEach(d=>d.open=true)">Expand all</button>
+        <button onclick="document.querySelectorAll('details').forEach(d=>d.open=false)">Collapse all</button>
+        <span class="hint">Click any row to toggle details</span>
+      </div>`
+    : "";
+
   const body = groups.length > 0
-    ? groups.map((group) => renderGroup(group)).join("\n")
+    ? toolbar + groups.map((group) => renderGroup(group)).join("\n")
     : `<div class="group-card" style="padding:16px;">No translation groups were captured for this run.</div>`;
 
   return `<!doctype html>
